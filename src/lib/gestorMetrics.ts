@@ -22,6 +22,7 @@ export interface ClientMetrics {
   mensagensIniciadas: number;           // total de leads (chats iniciados) do cliente
   cpt: number | null;                   // null se não há transferências
   campaigns: CampaignInsight[];         // campanhas Fim/Venda casadas
+  leads: RelatorioBias[];               // leads atribuídos a esse cliente (já com churn aplicado)
   churned: boolean;                     // status atual contém "perdido"/"churn"
   churnCutoff: Date | null;             // data de corte aplicada (se churned)
 }
@@ -328,6 +329,7 @@ export function computeGestorMetrics(opts: {
       mensagensIniciadas,
       cpt,
       campaigns,
+      leads: leadsDoCliente,
       churned,
       churnCutoff,
     };

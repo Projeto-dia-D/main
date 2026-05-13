@@ -8,6 +8,9 @@ import {
   type DoutorClientLink,
 } from '../lib/linkStorage';
 import { errorMessage, isMissingTableError } from '../lib/errors';
+import { readCache, writeCache } from '../lib/cache';
+
+const CACHE_KEY = 'doutorLinks:v1';
 
 export interface UseDoutorLinksResult {
   links: DoutorClientLink[];
@@ -22,8 +25,9 @@ export interface UseDoutorLinksResult {
 }
 
 export function useDoutorLinks(): UseDoutorLinksResult {
-  const [links, setLinks] = useState<DoutorClientLink[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cachedLinks = readCache<DoutorClientLink[]>(CACHE_KEY) ?? [];
+  const [links, setLinks] = useState<DoutorClientLink[]>(cachedLinks);
+  const [loading, setLoading] = useState(cachedLinks.length === 0);
   const [error, setError] = useState<string | null>(null);
   const [missingTable, setMissingTable] = useState(false);
   const activeRef = useRef(true);
@@ -33,6 +37,7 @@ export function useDoutorLinks(): UseDoutorLinksResult {
       const rows = await fetchAllDoutorLinks();
       if (!activeRef.current) return;
       setLinks(rows);
+      writeCache(CACHE_KEY, rows);
       setError(null);
       setMissingTable(false);
     } catch (e) {

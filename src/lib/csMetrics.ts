@@ -66,6 +66,7 @@ export function computeCsMetrics(opts: {
       mensagensIniciadas: 0,
       cpt: null,
       campaigns: [],
+      leads: [],
       churned: false,
       churnCutoff: null,
     })),

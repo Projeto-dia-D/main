@@ -4,7 +4,7 @@ import { fetchAllInstances } from '../lib/uazapi';
 // Re-fetch a lista de instâncias uazapi periodicamente.
 // O cache interno de 30min em uazapi.ts evita requests desnecessários,
 // mas este intervalo garante que novas instâncias apareçam sem reload.
-const REFRESH_MS = 1000 * 60 * 5; // 5 min
+const REFRESH_MS = 1000 * 60; // 1 min
 
 export function useInstanceMap(): Map<string, string> {
   const [map, setMap] = useState<Map<string, string>>(new Map());

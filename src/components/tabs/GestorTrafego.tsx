@@ -6,8 +6,10 @@ import { useMondayClients } from '../../hooks/useMondayClients';
 import { useMetaLinks } from '../../hooks/useMetaLinks';
 import { useDoutorLinks } from '../../hooks/useDoutorLinks';
 import { useAdAccountsForGestor } from '../../hooks/useAdAccountsForGestor';
-import { filterByDateRange, type DateRange } from '../../lib/metrics';
+import { filterByDateRange, isTransferido, type DateRange } from '../../lib/metrics';
 import { computeGestorMetrics } from '../../lib/gestorMetrics';
+import { LeadsTable } from '../programacao/LeadsTable';
+import { TransferidosTable } from '../programacao/TransferidosTable';
 import { assertConfig, assertGestorConfig } from '../../config';
 import { DateRangeFilter } from '../programacao/DateRangeFilter';
 import { Modal } from '../Modal';
@@ -29,6 +31,13 @@ export function GestorTrafego() {
 
   const [range, setRange] = useState<DateRange>({ start: null, end: null });
   const [openModal, setOpenModal] = useState<ModalKind>(null);
+  // Nome do gestor selecionado para drill-down com todos os seus clientes/doutores
+  const [selectedGestor, setSelectedGestor] = useState<string | null>(null);
+  // Drill-down por métrica do gestor: mensagens | transferencias | spend
+  const [drillGestor, setDrillGestor] = useState<{
+    gestor: string;
+    type: 'mensagens' | 'transferencias' | 'spend';
+  } | null>(null);
 
   const { leads, loading: leadsLoading, error: leadsError } = useLeads();
   const { clients: mondayClients, loading: mondayLoading, error: mondayError } =
@@ -91,6 +100,7 @@ export function GestorTrafego() {
         mensagensIniciadas: 0,
         cpt: null,
         campaigns: [],
+        leads: [],
         churned: false,
         churnCutoff: null,
       }))
@@ -269,7 +279,20 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
                 {summary.gestores.map((g) => (
-                  <GestorCard key={g.gestor} gestor={g} />
+                  <GestorCard
+                    key={g.gestor}
+                    gestor={g}
+                    onClick={() => setSelectedGestor(g.gestor)}
+                    onClickMensagens={() =>
+                      setDrillGestor({ gestor: g.gestor, type: 'mensagens' })
+                    }
+                    onClickTransferencias={() =>
+                      setDrillGestor({ gestor: g.gestor, type: 'transferencias' })
+                    }
+                    onClickSpend={() =>
+                      setDrillGestor({ gestor: g.gestor, type: 'spend' })
+                    }
+                  />
                 ))}
               </div>
             </section>
@@ -347,6 +370,67 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
           onUnlink={removeLink}
         />
       </Modal>
+
+      {/* Drill-down: clica num gestor → mostra TODOS os clientes/doutores dele */}
+      <Modal
+        open={selectedGestor !== null}
+        onClose={() => setSelectedGestor(null)}
+        title={selectedGestor ? `Clientes de ${selectedGestor}` : ''}
+        subtitle={(() => {
+          const g = summary.gestores.find((g) => g.gestor === selectedGestor);
+          if (!g) return '';
+          return `${g.clients.length} cliente(s) • ${g.totalTransferencias} transferência(s) • CPT ${g.cpt === null ? '—' : `R$ ${g.cpt.toFixed(2)}`}`;
+        })()}
+      >
+        <ClientesTable
+          clients={summary.gestores.find((g) => g.gestor === selectedGestor)?.clients ?? []}
+        />
+      </Modal>
+
+      {/* Drill-down por métrica: mensagens, transferencias, spend */}
+      {(() => {
+        if (!drillGestor) return null;
+        const g = summary.gestores.find((x) => x.gestor === drillGestor.gestor);
+        if (!g) return null;
+        const leads = g.clients.flatMap((cm) => cm.leads);
+        const campanhas = g.clients.flatMap((cm) => cm.campaigns);
+
+        if (drillGestor.type === 'mensagens') {
+          return (
+            <Modal
+              open
+              onClose={() => setDrillGestor(null)}
+              title={`Mensagens — ${g.gestor}`}
+              subtitle={`${leads.length} chat(s) iniciado(s) pelos clientes de ${g.gestor}`}
+            >
+              <LeadsTable leads={leads} />
+            </Modal>
+          );
+        }
+        if (drillGestor.type === 'transferencias') {
+          const transf = leads.filter(isTransferido);
+          return (
+            <Modal
+              open
+              onClose={() => setDrillGestor(null)}
+              title={`Transferências — ${g.gestor}`}
+              subtitle={`${transf.length} transferência(s) dos clientes de ${g.gestor}`}
+            >
+              <TransferidosTable leads={transf} />
+            </Modal>
+          );
+        }
+        return (
+          <Modal
+            open
+            onClose={() => setDrillGestor(null)}
+            title={`Spend — ${g.gestor}`}
+            subtitle={`${campanhas.length} campanha(s) • R$ ${g.totalSpend.toFixed(2)} total`}
+          >
+            <CampanhasTable insights={campanhas} />
+          </Modal>
+        );
+      })()}
     </div>
   );
 }

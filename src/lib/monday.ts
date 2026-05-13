@@ -369,18 +369,38 @@ export async function fetchMondayClients(): Promise<FetchClientsResult> {
 // ============================================================================
 // Board "📳 Clientes BIA Soft" (id 9887531051)
 //
-// Lista os clientes que efetivamente têm Bia ativa. Usamos para filtrar
-// a visão de Gestor/CS para mostrar apenas clientes com Bia — clientes
-// que estão no board principal mas NÃO neste board são desconsiderados.
+// Só consideramos para Gestor/CS clientes cuja "Fase" está em uma das
+// categorias ATIVAS — Bia funcionando ou em fase de testes. Quando o
+// cliente sai dessas fases (vira Pausado, Churn, etc.), automaticamente
+// para de contar nas métricas no próximo refresh.
 // ============================================================================
 const BIA_SOFT_BOARD_ID = '9887531051';
+const BIA_FASE_COL_ID = 'color_mktr1m3s';     // coluna "Fase" do board Bia Soft
+const BIA_RESP_COL_ID = 'person';              // coluna "Responsável" (people)
+
+// Fases que CONTAM (case-insensitive, sem acento, match por substring).
+const BIA_FASES_ATIVAS = [
+  'i.a ativa',  // Bia rodando em produção
+  'ia ativa',   // variação sem ponto
+  'manutencao', // Manutenção (sem acento por causa do normalize)
+];
+
+function isFaseAtiva(fase: string | null | undefined): boolean {
+  const n = normalize(fase);
+  if (!n) return false;
+  return BIA_FASES_ATIVAS.some((f) => n.includes(f));
+}
 
 const BIA_LIST_QUERY = `
-  query ($boardId: ID!, $limit: Int!) {
+  query ($boardId: ID!, $limit: Int!, $colIds: [String!]) {
     boards(ids: [$boardId]) {
       items_page(limit: $limit) {
         cursor
-        items { id name }
+        items {
+          id
+          name
+          column_values(ids: $colIds) { id text }
+        }
       }
     }
   }
@@ -390,15 +410,25 @@ const BIA_NEXT_PAGE_QUERY = `
   query ($cursor: String!, $limit: Int!) {
     next_items_page(cursor: $cursor, limit: $limit) {
       cursor
-      items { id name }
+      items {
+        id
+        name
+        column_values { id text }
+      }
     }
   }
 `;
 
+interface BiaItem {
+  id: string;
+  name: string;
+  column_values: Array<{ id: string; text: string | null }>;
+}
+
 interface BiaListResp {
   data?: {
     boards?: Array<{
-      items_page: { cursor: string | null; items: Array<{ id: string; name: string }> };
+      items_page: { cursor: string | null; items: BiaItem[] };
     }>;
   };
   errors?: Array<{ message: string }>;
@@ -407,46 +437,94 @@ interface BiaListResp {
 
 interface BiaNextResp {
   data?: {
-    next_items_page: { cursor: string | null; items: Array<{ id: string; name: string }> };
+    next_items_page: { cursor: string | null; items: BiaItem[] };
   };
   errors?: Array<{ message: string }>;
   error_message?: string;
 }
 
+function extractFase(item: BiaItem): string | null {
+  const cv = item.column_values.find((c) => c.id === BIA_FASE_COL_ID);
+  return cv?.text?.trim() || null;
+}
+
+function extractResponsavel(item: BiaItem): string | null {
+  const cv = item.column_values.find((c) => c.id === BIA_RESP_COL_ID);
+  return cv?.text?.trim() || null;
+}
+
+export interface BiaSoftData {
+  /** Set de nomes (normalizados) de clientes com Fase ativa. */
+  activeNames: Set<string>;
+  /** Map<nomeNormalizado, responsavelName> — responsável pelo cliente. */
+  responsavelByName: Map<string, string>;
+  /** Lista única de nomes de responsáveis (Gabriel, Eduardo) com Fase ativa. */
+  responsaveis: string[];
+}
+
 /**
- * Busca os nomes dos clientes que estão no board 📳 Clientes BIA Soft.
- * Retorna um Set de nomes normalizados (sem acento, lowercase) para
- * comparação rápida.
+ * Busca dados do board 📳 Clientes BIA Soft:
+ * - Conjunto de nomes com Fase ativa (I.A ativa / Manutenção)
+ * - Mapa cliente → responsável (Gabriel Velho / Eduardo Henckemaier)
  */
-export async function fetchBiaSoftClientNames(): Promise<Set<string>> {
-  const names = new Set<string>();
-  if (!config.MONDAY_TOKEN) return names;
+export async function fetchBiaSoftData(): Promise<BiaSoftData> {
+  const activeNames = new Set<string>();
+  const responsavelByName = new Map<string, string>();
+  const responsaveisSet = new Set<string>();
+  if (!config.MONDAY_TOKEN) {
+    return { activeNames, responsavelByName, responsaveis: [] };
+  }
+
+  function process(it: BiaItem) {
+    if (!isFaseAtiva(extractFase(it))) return;
+    const key = normalize(it.name);
+    activeNames.add(key);
+    const resp = extractResponsavel(it);
+    if (resp) {
+      responsavelByName.set(key, resp);
+      responsaveisSet.add(resp);
+    }
+  }
 
   try {
     const first = await gql<BiaListResp>(BIA_LIST_QUERY, {
       boardId: BIA_SOFT_BOARD_ID,
       limit: PAGE_LIMIT,
+      colIds: [BIA_FASE_COL_ID, BIA_RESP_COL_ID],
     });
     const page = first.data?.boards?.[0]?.items_page;
-    if (!page) return names;
-    for (const it of page.items) names.add(normalize(it.name));
-
-    let cursor = page.cursor;
-    while (cursor) {
-      const next = await gql<BiaNextResp>(BIA_NEXT_PAGE_QUERY, {
-        cursor,
-        limit: PAGE_LIMIT,
-      });
-      const np = next.data?.next_items_page;
-      if (!np) break;
-      for (const it of np.items) names.add(normalize(it.name));
-      cursor = np.cursor;
+    if (page) {
+      for (const it of page.items) process(it);
+      let cursor = page.cursor;
+      while (cursor) {
+        const next = await gql<BiaNextResp>(BIA_NEXT_PAGE_QUERY, {
+          cursor,
+          limit: PAGE_LIMIT,
+        });
+        const np = next.data?.next_items_page;
+        if (!np) break;
+        for (const it of np.items) process(it);
+        cursor = np.cursor;
+      }
     }
   } catch (e) {
-    console.warn('[Monday] falha ao buscar clientes Bia Soft:', e);
+    console.warn('[Monday] falha ao buscar dados Bia Soft:', e);
   }
 
-  return names;
+  return {
+    activeNames,
+    responsavelByName,
+    responsaveis: Array.from(responsaveisSet).sort(),
+  };
+}
+
+/**
+ * Mantida por compatibilidade — só retorna o Set de nomes ativos.
+ * Internamente usa fetchBiaSoftData.
+ */
+export async function fetchBiaSoftClientNames(): Promise<Set<string>> {
+  const d = await fetchBiaSoftData();
+  return d.activeNames;
 }
 
 /** Match cliente Monday × lista de nomes do board Bia Soft. */

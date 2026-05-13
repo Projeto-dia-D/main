@@ -2,7 +2,13 @@ import { useMemo, useState } from 'react';
 import { useLeads } from '../../hooks/useLeads';
 import { useInstanceMap } from '../../hooks/useInstanceMap';
 import { useMondayClients } from '../../hooks/useMondayClients';
-import { computeMetrics, filterByDateRange, isTransferido, type DateRange } from '../../lib/metrics';
+import {
+  computeMetrics,
+  filterByDateRange,
+  getResponsavelForDoutor,
+  isTransferido,
+  type DateRange,
+} from '../../lib/metrics';
 import { PainelGeral } from '../programacao/PainelGeral';
 import { RankingDoutores } from '../programacao/RankingDoutores';
 import { Alertas } from '../programacao/Alertas';
@@ -25,15 +31,26 @@ export function Programacao() {
   // Clients são carregados pra aplicar o corte de churn por cliente.
   // Programação usa TODOS os clientes (não apenas com Bia) pra que o churn
   // cutoff funcione independente do filtro de Bia Soft.
-  const { allClients: mondayClients } = useMondayClients();
+  const { allClients: mondayClients, responsavelByClient, responsaveis } =
+    useMondayClients();
 
   const [range, setRange] = useState<DateRange>({ start: null, end: null });
   const [openModal, setOpenModal] = useState<ModalKind>(null);
+  // null = mostra todos; senão filtra leads por responsável (Gabriel/Eduardo)
+  const [responsavelFiltro, setResponsavelFiltro] = useState<string | null>(null);
 
-  const filteredLeads = useMemo(
-    () => filterByDateRange(leads, range),
-    [leads, range]
-  );
+  const filteredLeads = useMemo(() => {
+    const byRange = filterByDateRange(leads, range);
+    if (!responsavelFiltro) return byRange;
+    // Filtra leads cujo doutor está atribuído ao responsável selecionado.
+    // Leads sem doutor ou cujo doutor não casa com nenhum cliente Monday são
+    // excluídos do filtro.
+    return byRange.filter((l) => {
+      const r = getResponsavelForDoutor(l.nomeDoutor, responsavelByClient);
+      return r === responsavelFiltro;
+    });
+  }, [leads, range, responsavelFiltro, responsavelByClient]);
+
   const summary = useMemo(
     () => computeMetrics(filteredLeads, range, instanceMap, mondayClients),
     [filteredLeads, range, instanceMap, mondayClients]
@@ -98,6 +115,27 @@ export function Programacao() {
 
   return (
     <div className="p-6 lg:p-8 flex flex-col gap-6 max-w-[1600px] mx-auto">
+      {responsaveis.length > 0 && (
+        <div className="flex items-center gap-1.5 bg-burst-card border border-burst-border rounded-xl p-1.5 w-fit">
+          <ResponsavelTab
+            label="Todos"
+            active={responsavelFiltro === null}
+            onClick={() => setResponsavelFiltro(null)}
+          />
+          {responsaveis.map((r) => {
+            const firstName = r.split(' ')[0];
+            return (
+              <ResponsavelTab
+                key={r}
+                label={firstName}
+                active={responsavelFiltro === r}
+                onClick={() => setResponsavelFiltro(r)}
+              />
+            );
+          })}
+        </div>
+      )}
+
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
           <HeaderBadge
@@ -209,6 +247,30 @@ export function Programacao() {
         <LeadsTable leads={summary.chatsIncompletos} />
       </Modal>
     </div>
+  );
+}
+
+function ResponsavelTab({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={[
+        'px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors',
+        active
+          ? 'bg-burst-orange/20 text-burst-orange-bright shadow-orange-glow-sm'
+          : 'text-burst-muted hover:text-white hover:bg-white/5',
+      ].join(' ')}
+    >
+      {label}
+    </button>
   );
 }
 

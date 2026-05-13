@@ -3,9 +3,15 @@ import { supabase, TABLE_NAME } from '../lib/supabase';
 import type { RelatorioBias } from '../lib/types';
 import { assertConfig } from '../config';
 import { isPhoneBlocked } from '../lib/blockedPhones';
+import { readCacheWithMeta, writeCache } from '../lib/cache';
 
 const POLL_MS = 3000;
 const PAGE_SIZE = 1000;
+const CACHE_KEY = 'leads:v1';
+
+interface CachedLeads {
+  leads: RelatorioBias[];
+}
 
 export interface UseLeadsResult {
   leads: RelatorioBias[];
@@ -52,10 +58,16 @@ function deleteBlockedInBackground(ids: string[]) {
 }
 
 export function useLeads(): UseLeadsResult {
-  const [leads, setLeads]           = useState<RelatorioBias[]>([]);
-  const [loading, setLoading]       = useState(true);
+  // Lê cache imediatamente — tela renderiza sem espera no primeiro paint
+  const cached = readCacheWithMeta<CachedLeads>(CACHE_KEY);
+  const initialLeads = cached?.value.leads ?? [];
+  const initialUpdate = cached ? new Date(cached.savedAt) : null;
+
+  const [leads, setLeads]           = useState<RelatorioBias[]>(initialLeads);
+  // Só fica "loading" se não temos cache pra exibir
+  const [loading, setLoading]       = useState(initialLeads.length === 0);
   const [error, setError]           = useState<string | null>(null);
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(initialUpdate);
   const activeRef                   = useRef(true);
 
   const missing = assertConfig();
@@ -88,6 +100,8 @@ export function useLeads(): UseLeadsResult {
         setLeads(cleanRows);
         setLastUpdate(new Date());
         setError(null);
+        // Persiste em localStorage para próximas aberturas
+        writeCache<CachedLeads>(CACHE_KEY, { leads: cleanRows });
       } catch (e) {
         if (!activeRef.current) return;
         console.error('[useLeads] fetch error', e);

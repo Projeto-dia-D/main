@@ -5,7 +5,7 @@ import { useMetaSpend } from '../../hooks/useMetaSpend';
 import { useMondayClients } from '../../hooks/useMondayClients';
 import { useMetaLinks } from '../../hooks/useMetaLinks';
 import { useDoutorLinks } from '../../hooks/useDoutorLinks';
-import { filterByDateRange, type DateRange } from '../../lib/metrics';
+import { filterByDateRange, isTransferido, type DateRange } from '../../lib/metrics';
 import { computeCsMetrics } from '../../lib/csMetrics';
 import { assertConfig, assertGestorConfig } from '../../config';
 import { DateRangeFilter } from '../programacao/DateRangeFilter';
@@ -16,6 +16,9 @@ import { RankingCs } from '../cs/RankingCs';
 import { CsCard } from '../cs/CsCard';
 import { CsesTable } from '../cs/CsesTable';
 import { ClientesTable } from '../gestor/ClientesTable';
+import { CampanhasTable } from '../gestor/CampanhasTable';
+import { LeadsTable } from '../programacao/LeadsTable';
+import { TransferidosTable } from '../programacao/TransferidosTable';
 
 type ModalKind = 'clientes' | 'cses' | null;
 
@@ -25,6 +28,13 @@ export function CS() {
 
   const [range, setRange] = useState<DateRange>({ start: null, end: null });
   const [openModal, setOpenModal] = useState<ModalKind>(null);
+  // Nome do CS selecionado para abrir drill-down com seus clientes
+  const [selectedCs, setSelectedCs] = useState<string | null>(null);
+  // Drill-down adicional: { cs, type } onde type = mensagens | transferencias | spend
+  const [drillCs, setDrillCs] = useState<{
+    cs: string;
+    type: 'mensagens' | 'transferencias' | 'spend';
+  } | null>(null);
 
   const { leads, loading: leadsLoading, error: leadsError } = useLeads();
   const { clients: mondayClients, loading: mondayLoading, error: mondayError } = useMondayClients();
@@ -188,7 +198,14 @@ export function CS() {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
                 {summary.cses.map((c) => (
-                  <CsCard key={c.cs} cs={c} />
+                  <CsCard
+                    key={c.cs}
+                    cs={c}
+                    onClick={() => setSelectedCs(c.cs)}
+                    onClickMensagens={() => setDrillCs({ cs: c.cs, type: 'mensagens' })}
+                    onClickTransferencias={() => setDrillCs({ cs: c.cs, type: 'transferencias' })}
+                    onClickSpend={() => setDrillCs({ cs: c.cs, type: 'spend' })}
+                  />
                 ))}
               </div>
             </section>
@@ -215,6 +232,68 @@ export function CS() {
       >
         <CsesTable cses={summary.cses} />
       </Modal>
+
+      {/* Drill-down: clica num CS → mostra TODOS os clientes dele */}
+      <Modal
+        open={selectedCs !== null}
+        onClose={() => setSelectedCs(null)}
+        title={selectedCs ? `Clientes de ${selectedCs}` : ''}
+        subtitle={(() => {
+          const c = summary.cses.find((c) => c.cs === selectedCs);
+          if (!c) return '';
+          return `${c.clients.length} cliente(s) • ${c.totalTransferencias} transferência(s) • CPT ${c.cpt === null ? '—' : `R$ ${c.cpt.toFixed(2)}`}`;
+        })()}
+      >
+        <ClientesTable
+          clients={summary.cses.find((c) => c.cs === selectedCs)?.clients ?? []}
+        />
+      </Modal>
+
+      {/* Drill-down por métrica: mensagens, transferencias, spend */}
+      {(() => {
+        if (!drillCs) return null;
+        const c = summary.cses.find((cs) => cs.cs === drillCs.cs);
+        if (!c) return null;
+        const leads = c.clients.flatMap((cm) => cm.leads);
+        const campanhas = c.clients.flatMap((cm) => cm.campaigns);
+
+        if (drillCs.type === 'mensagens') {
+          return (
+            <Modal
+              open
+              onClose={() => setDrillCs(null)}
+              title={`Mensagens — ${c.cs}`}
+              subtitle={`${leads.length} chat(s) iniciado(s) pelos clientes de ${c.cs}`}
+            >
+              <LeadsTable leads={leads} />
+            </Modal>
+          );
+        }
+        if (drillCs.type === 'transferencias') {
+          const transf = leads.filter(isTransferido);
+          return (
+            <Modal
+              open
+              onClose={() => setDrillCs(null)}
+              title={`Transferências — ${c.cs}`}
+              subtitle={`${transf.length} transferência(s) dos clientes de ${c.cs}`}
+            >
+              <TransferidosTable leads={transf} />
+            </Modal>
+          );
+        }
+        // spend
+        return (
+          <Modal
+            open
+            onClose={() => setDrillCs(null)}
+            title={`Spend — ${c.cs}`}
+            subtitle={`${campanhas.length} campanha(s) • R$ ${c.totalSpend.toFixed(2)} total`}
+          >
+            <CampanhasTable insights={campanhas} />
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
