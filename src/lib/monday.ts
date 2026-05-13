@@ -365,3 +365,101 @@ export async function fetchMondayClients(): Promise<FetchClientsResult> {
     },
   };
 }
+
+// ============================================================================
+// Board "📳 Clientes BIA Soft" (id 9887531051)
+//
+// Lista os clientes que efetivamente têm Bia ativa. Usamos para filtrar
+// a visão de Gestor/CS para mostrar apenas clientes com Bia — clientes
+// que estão no board principal mas NÃO neste board são desconsiderados.
+// ============================================================================
+const BIA_SOFT_BOARD_ID = '9887531051';
+
+const BIA_LIST_QUERY = `
+  query ($boardId: ID!, $limit: Int!) {
+    boards(ids: [$boardId]) {
+      items_page(limit: $limit) {
+        cursor
+        items { id name }
+      }
+    }
+  }
+`;
+
+const BIA_NEXT_PAGE_QUERY = `
+  query ($cursor: String!, $limit: Int!) {
+    next_items_page(cursor: $cursor, limit: $limit) {
+      cursor
+      items { id name }
+    }
+  }
+`;
+
+interface BiaListResp {
+  data?: {
+    boards?: Array<{
+      items_page: { cursor: string | null; items: Array<{ id: string; name: string }> };
+    }>;
+  };
+  errors?: Array<{ message: string }>;
+  error_message?: string;
+}
+
+interface BiaNextResp {
+  data?: {
+    next_items_page: { cursor: string | null; items: Array<{ id: string; name: string }> };
+  };
+  errors?: Array<{ message: string }>;
+  error_message?: string;
+}
+
+/**
+ * Busca os nomes dos clientes que estão no board 📳 Clientes BIA Soft.
+ * Retorna um Set de nomes normalizados (sem acento, lowercase) para
+ * comparação rápida.
+ */
+export async function fetchBiaSoftClientNames(): Promise<Set<string>> {
+  const names = new Set<string>();
+  if (!config.MONDAY_TOKEN) return names;
+
+  try {
+    const first = await gql<BiaListResp>(BIA_LIST_QUERY, {
+      boardId: BIA_SOFT_BOARD_ID,
+      limit: PAGE_LIMIT,
+    });
+    const page = first.data?.boards?.[0]?.items_page;
+    if (!page) return names;
+    for (const it of page.items) names.add(normalize(it.name));
+
+    let cursor = page.cursor;
+    while (cursor) {
+      const next = await gql<BiaNextResp>(BIA_NEXT_PAGE_QUERY, {
+        cursor,
+        limit: PAGE_LIMIT,
+      });
+      const np = next.data?.next_items_page;
+      if (!np) break;
+      for (const it of np.items) names.add(normalize(it.name));
+      cursor = np.cursor;
+    }
+  } catch (e) {
+    console.warn('[Monday] falha ao buscar clientes Bia Soft:', e);
+  }
+
+  return names;
+}
+
+/** Match cliente Monday × lista de nomes do board Bia Soft. */
+export function isClientNoBiaSoft(
+  client: MondayClient,
+  biaNames: Set<string>
+): boolean {
+  if (biaNames.size === 0) return true; // sem dados → não filtra
+  const n = normalize(client.name);
+  if (biaNames.has(n)) return true;
+  // match substring nos dois sentidos pra acomodar pequenas variações
+  for (const bn of biaNames) {
+    if (n.includes(bn) || bn.includes(n)) return true;
+  }
+  return false;
+}

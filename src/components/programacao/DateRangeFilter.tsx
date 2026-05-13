@@ -40,12 +40,23 @@ function ontemRange(): DateRange {
   return { start, end };
 }
 
+// Período Dia D: a partir do dia 12 do mês corrente até hoje.
+// (mês 0-indexado em Date: maio = 4, mas usamos getMonth() pra acompanhar o mês atual)
+function diaDRange(): DateRange {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 12, 0, 0, 0, 0);
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
 interface Preset {
   label: string;
   getRange: () => DateRange;
 }
 
 const PRESETS: Preset[] = [
+  { label: 'Dia D', getRange: diaDRange },
   { label: 'Hoje', getRange: () => presetRange(1) },
   { label: 'Ontem', getRange: ontemRange },
   { label: '7 dias', getRange: () => presetRange(7) },
