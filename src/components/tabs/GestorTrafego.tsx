@@ -23,7 +23,7 @@ import { GestoresTable } from '../gestor/GestoresTable';
 import { VinculacoesModal } from '../gestor/VinculacoesModal';
 import { DiagnosticoOrfaos } from '../gestor/DiagnosticoOrfaos';
 
-type ModalKind = 'clientes' | 'campanhas' | 'gestores' | 'vinculos' | null;
+type ModalKind = 'clientes' | 'campanhas' | 'gestores' | 'vinculos' | 'campanhas-orfas' | null;
 
 export function GestorTrafego() {
   const baseMissing = assertConfig();
@@ -311,15 +311,24 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
           )}
 
           {summary.campaignsOrfas.length > 0 && (
-            <div className="rounded-xl border border-burst-border bg-black/20 p-4">
-              <div className="text-xs uppercase tracking-widest text-burst-muted mb-2">
+            <button
+              onClick={() => setOpenModal('campanhas-orfas')}
+              className="text-left rounded-xl border border-burst-border bg-black/20 p-4 hover:border-burst-orange/50 hover:bg-black/40 transition-colors group"
+            >
+              <div className="text-xs uppercase tracking-widest text-burst-muted mb-2 flex items-center gap-2">
                 {summary.campaignsOrfas.length} campanha(s) Fim/Venda sem cliente casado
+                <span className="text-burst-orange-bright opacity-0 group-hover:opacity-100 transition-opacity normal-case tracking-normal">
+                  → ver lista
+                </span>
               </div>
               <div className="text-xs text-burst-muted">
                 Estas campanhas têm o padrão de nome mas nenhum cliente do Monday foi encontrado no
                 nome da campanha. O spend delas não está atribuído a nenhum gestor.
+                <span className="block mt-1 text-burst-orange-bright">
+                  Total: {summary.campaignsOrfas.reduce((s, c) => s + c.spend, 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                </span>
               </div>
-            </div>
+            </button>
           )}
         </>
       )}
@@ -431,6 +440,15 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
           </Modal>
         );
       })()}
+
+      <Modal
+        open={openModal === 'campanhas-orfas'}
+        onClose={() => setOpenModal(null)}
+        title="Campanhas Fim/Venda sem cliente casado"
+        subtitle={`${summary.campaignsOrfas.length} campanha(s) — spend não atribuído a nenhum gestor`}
+      >
+        <CampanhasTable insights={summary.campaignsOrfas} />
+      </Modal>
     </div>
   );
 }
