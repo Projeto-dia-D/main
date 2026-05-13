@@ -260,7 +260,7 @@ export async function fetchInsightsForLinks(
         name: l.meta_account_name ?? l.meta_account_id,
       }));
 
-      const results = await mapWithConcurrency(targets, 2, (ad) =>
+      const results = await mapWithConcurrency(targets, 5, (ad) =>
         fetchInsightsForAdAccount(acc, ad, range).catch((e) => {
           errors.push(errorMessage(e));
           return [] as CampaignInsight[];

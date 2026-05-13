@@ -80,7 +80,7 @@ function buildGroups(leads: RelatorioBias[]): DoutorGroup[] {
 }
 
 function DoutorBlock({ group, query }: { group: DoutorGroup; query: string }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
 
   const clientes = useMemo(() => {
     if (!query.trim()) return group.clientes;

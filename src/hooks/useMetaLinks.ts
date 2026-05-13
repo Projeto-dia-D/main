@@ -8,6 +8,9 @@ import {
   type ClientMetaLink,
 } from '../lib/linkStorage';
 import { errorMessage, isMissingTableError } from '../lib/errors';
+import { readCache, writeCache } from '../lib/cache';
+
+const CACHE_KEY = 'metaLinks:v1';
 
 export interface UseMetaLinksResult {
   links: ClientMetaLink[];
@@ -22,8 +25,9 @@ export interface UseMetaLinksResult {
 }
 
 export function useMetaLinks(): UseMetaLinksResult {
-  const [links, setLinks] = useState<ClientMetaLink[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cachedLinks = readCache<ClientMetaLink[]>(CACHE_KEY) ?? [];
+  const [links, setLinks] = useState<ClientMetaLink[]>(cachedLinks);
+  const [loading, setLoading] = useState(cachedLinks.length === 0);
   const [error, setError] = useState<string | null>(null);
   const [missingTable, setMissingTable] = useState(false);
   const activeRef = useRef(true);
@@ -33,6 +37,7 @@ export function useMetaLinks(): UseMetaLinksResult {
       const rows = await fetchAllLinks();
       if (!activeRef.current) return;
       setLinks(rows);
+      writeCache(CACHE_KEY, rows);
       setError(null);
       setMissingTable(false);
     } catch (e) {

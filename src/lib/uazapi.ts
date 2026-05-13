@@ -8,7 +8,7 @@ interface UazapiInstance {
 
 let cachedMap: Map<string, string> | null = null;
 let cacheTime = 0;
-const CACHE_TTL_MS = 1000 * 60 * 30; // 30 min
+const CACHE_TTL_MS = 1000 * 45; // 45s — alinhado com o refresh de 1min do hook
 let inflightPromise: Promise<Map<string, string>> | null = null;
 
 /**

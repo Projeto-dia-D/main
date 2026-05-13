@@ -5,9 +5,19 @@ import { AnimatedNumber } from '../AnimatedNumber';
 
 interface Props {
   cs: CsMetrics;
+  onClick?: () => void;
+  onClickMensagens?: () => void;
+  onClickTransferencias?: () => void;
+  onClickSpend?: () => void;
 }
 
-export function CsCard({ cs }: Props) {
+export function CsCard({
+  cs,
+  onClick,
+  onClickMensagens,
+  onClickTransferencias,
+  onClickSpend,
+}: Props) {
   const colors = tierColorCpt(cs.tier);
   const status =
     cs.totalTransferencias > 0
@@ -16,8 +26,20 @@ export function CsCard({ cs }: Props) {
 
   return (
     <div
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={(e) => {
+        if (onClick && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       className={[
-        'rounded-2xl bg-burst-card border p-5 flex flex-col gap-4 animate-slide-up hover:translate-y-[-2px] transition-all',
+        'rounded-2xl bg-burst-card border p-5 flex flex-col gap-4 animate-slide-up transition-all',
+        onClick
+          ? 'cursor-pointer hover:translate-y-[-2px] hover:border-burst-orange focus:outline-none focus:ring-2 focus:ring-burst-orange/50'
+          : 'hover:translate-y-[-2px]',
         colors.border,
         colors.glow,
       ].join(' ')}
@@ -42,27 +64,30 @@ export function CsCard({ cs }: Props) {
       </div>
 
       <div className="grid grid-cols-3 gap-2 text-xs">
-        <div className="rounded-lg bg-black/30 border border-burst-border px-3 py-2 flex flex-col">
-          <div className="flex items-center gap-1 text-burst-muted text-[10px] uppercase tracking-wider">
-            <MessageCircle size={11} /> Mensagens
-          </div>
+        <StatBox
+          icon={<MessageCircle size={11} />}
+          label="Mensagens"
+          onClick={onClickMensagens}
+        >
           <AnimatedNumber value={cs.totalMensagens} className="font-display text-xl text-white" />
-        </div>
-        <div className="rounded-lg bg-black/30 border border-burst-border px-3 py-2 flex flex-col">
-          <div className="flex items-center gap-1 text-burst-muted text-[10px] uppercase tracking-wider">
-            <ArrowDownRight size={11} /> Transf.
-          </div>
+        </StatBox>
+        <StatBox
+          icon={<ArrowDownRight size={11} />}
+          label="Transf."
+          onClick={onClickTransferencias}
+        >
           <AnimatedNumber value={cs.totalTransferencias} className="font-display text-xl text-burst-orange-bright" />
-        </div>
-        <div className="rounded-lg bg-black/30 border border-burst-border px-3 py-2 flex flex-col">
-          <div className="flex items-center gap-1 text-burst-muted text-[10px] uppercase tracking-wider">
-            <DollarSign size={11} /> Spend
-          </div>
+        </StatBox>
+        <StatBox
+          icon={<DollarSign size={11} />}
+          label="Spend"
+          onClick={onClickSpend}
+        >
           <span className="font-display text-lg text-white truncate">{brl(cs.totalSpend)}</span>
-        </div>
+        </StatBox>
       </div>
 
-      <div className="border-t border-burst-border pt-3">
+      <div className="border-t border-burst-border pt-3" onClick={(e) => e.stopPropagation()}>
         <div className="text-[11px] uppercase tracking-widest text-burst-muted mb-2">
           Clientes do CS
         </div>
@@ -83,6 +108,51 @@ export function CsCard({ cs }: Props) {
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+function StatBox({
+  icon,
+  label,
+  onClick,
+  children,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick?: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      onClick={
+        onClick
+          ? (e) => {
+              e.stopPropagation();
+              onClick();
+            }
+          : undefined
+      }
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={(e) => {
+        if (onClick && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          e.stopPropagation();
+          onClick();
+        }
+      }}
+      className={[
+        'rounded-lg bg-black/30 border border-burst-border px-3 py-2 flex flex-col transition-colors',
+        onClick
+          ? 'cursor-pointer hover:bg-black/50 hover:border-burst-orange/60 focus:outline-none focus:ring-1 focus:ring-burst-orange/50'
+          : '',
+      ].join(' ')}
+    >
+      <div className="flex items-center gap-1 text-burst-muted text-[10px] uppercase tracking-wider">
+        {icon} {label}
+      </div>
+      {children}
     </div>
   );
 }

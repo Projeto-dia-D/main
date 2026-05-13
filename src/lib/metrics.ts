@@ -74,6 +74,32 @@ export function isNomeChatIncompleto(nome: string | null | undefined): boolean {
   return DOUTORES_CHAT_INCOMPLETO.some((p) => n.includes(p));
 }
 
+/**
+ * Resolve o responsável (programador) de um doutor cruzando com o mapa
+ * (nomeCliente normalizado → responsavel) vindo do board Bia Soft.
+ *
+ * Estratégia de match (mesma da gestorMetrics):
+ * 1. nome exato
+ * 2. doutor contém cliente OU cliente contém doutor (substring nos dois sentidos)
+ */
+export function getResponsavelForDoutor(
+  doutorName: string | null | undefined,
+  responsavelByClient: Map<string, string>
+): string | null {
+  const target = normalize(doutorName);
+  if (!target || responsavelByClient.size === 0) return null;
+
+  // exato
+  if (responsavelByClient.has(target)) return responsavelByClient.get(target)!;
+
+  // substring nos dois sentidos
+  for (const [client, resp] of responsavelByClient) {
+    if (!client) continue;
+    if (target.includes(client) || client.includes(target)) return resp;
+  }
+  return null;
+}
+
 // Aceita nomes de instância começando com "Dr.", "Dr ", "Dra." ou "Dra " (case insensitive).
 const DR_PREFIX_RE = /^dra?\.?\s+\S/i;
 
