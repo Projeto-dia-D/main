@@ -10,12 +10,15 @@ import { getClientChurnCutoff } from './monday';
 const TRANSFERENCIA_PATTERNS = [
   'agendar consulta',
   'agendar avaliacao',
+  'agendar avalicao',     // typo: falta o "a" em avaliacao
+  'agendar avaliacap',    // typo: "p" no lugar do "o"
   'agendamento confirmado',
   'consulta agendada',
   'avaliacao agendada',
   'vou agendar',
   'pode agendar',
   'agendamento',
+  'encaminhamento contato',
 ];
 
 const INTERROMPIDO_PATTERNS = [
@@ -56,6 +59,17 @@ export function isInterrompido(lead: RelatorioBias): boolean {
 
 export function isChatIncompleto(lead: RelatorioBias): boolean {
   const n = normalize(lead.nomeDoutor);
+  if (!n) return false;
+  return DOUTORES_CHAT_INCOMPLETO.some((p) => n.includes(p));
+}
+
+/**
+ * Checa se um NOME (de cliente Monday, ou de doutor) bate com a lista de
+ * "chat incompleto" — usado pra desqualificar o cliente inteiro nas métricas
+ * de Gestor/CS, não só os leads dele.
+ */
+export function isNomeChatIncompleto(nome: string | null | undefined): boolean {
+  const n = normalize(nome);
   if (!n) return false;
   return DOUTORES_CHAT_INCOMPLETO.some((p) => n.includes(p));
 }

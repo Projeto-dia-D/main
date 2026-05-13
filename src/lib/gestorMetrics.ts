@@ -3,7 +3,12 @@ import type { MondayClient } from './monday';
 import type { CampaignInsight } from './meta';
 import type { ClientMetaLink, DoutorClientLink } from './linkStorage';
 import { isFimVenda } from './meta';
-import { isTransferido, isInterrompido, isChatIncompleto } from './metrics';
+import {
+  isTransferido,
+  isInterrompido,
+  isChatIncompleto,
+  isNomeChatIncompleto,
+} from './metrics';
 import { isGestorExcluido } from '../config';
 import { getClientChurnCutoff, isClientChurned } from './monday';
 
@@ -183,7 +188,12 @@ export function computeGestorMetrics(opts: {
   metaLinks?: Map<string, ClientMetaLink>;       // key: meta_account_id (act_xxx)
   doutorLinks?: Map<string, DoutorClientLink[]>; // key: monday_client_id → links manuais
 }): GestorSummary {
-  const { clients, insights, leads, metaLinks, doutorLinks } = opts;
+  const { insights, leads, metaLinks, doutorLinks } = opts;
+
+  // 0) Remove da lista de clientes os que estão na lista de "chat incompleto"
+  // (Daiane Feduk, Sorriso Recife, VitaPrime, etc.). Eles foram desqualificados
+  // do dashboard de Programação e também não devem aparecer pro Gestor/CS.
+  const clients = opts.clients.filter((c) => !isNomeChatIncompleto(c.name));
 
   // 1) Leads ativos (ignora chats interrompidos e chats incompletos)
   const activeLeads = leads.filter(

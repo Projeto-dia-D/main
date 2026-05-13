@@ -23,8 +23,9 @@ export function Programacao() {
   const { leads, loading, error, lastUpdate, configMissing } = useLeads();
   const instanceMap = useInstanceMap();
   // Clients são carregados pra aplicar o corte de churn por cliente.
-  // Se o Monday não estiver configurado, retorna lista vazia — sem cortes.
-  const { clients: mondayClients } = useMondayClients();
+  // Programação usa TODOS os clientes (não apenas com Bia) pra que o churn
+  // cutoff funcione independente do filtro de Bia Soft.
+  const { allClients: mondayClients } = useMondayClients();
 
   const [range, setRange] = useState<DateRange>({ start: null, end: null });
   const [openModal, setOpenModal] = useState<ModalKind>(null);
