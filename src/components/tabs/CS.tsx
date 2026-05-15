@@ -8,7 +8,7 @@ import { useDoutorLinks } from '../../hooks/useDoutorLinks';
 import { filterByDateRange, isTransferido, type DateRange } from '../../lib/metrics';
 import { computeCsMetrics } from '../../lib/csMetrics';
 import { assertConfig, assertGestorConfig } from '../../config';
-import { DateRangeFilter } from '../programacao/DateRangeFilter';
+import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
 import { Modal } from '../Modal';
 import { PainelGeralCs } from '../cs/PainelGeralCs';
 import { PainelMiniCs } from '../cs/PainelMiniCs';
@@ -26,7 +26,8 @@ export function CS() {
   const baseMissing = assertConfig();
   const gestorMissing = assertGestorConfig();
 
-  const [range, setRange] = useState<DateRange>({ start: null, end: null });
+  // Aba abre por padrão filtrada pelo período "Dia D" (dia 12 do mês até hoje)
+  const [range, setRange] = useState<DateRange>(() => diaDRange());
   const [openModal, setOpenModal] = useState<ModalKind>(null);
   // Nome do CS selecionado para abrir drill-down com seus clientes
   const [selectedCs, setSelectedCs] = useState<string | null>(null);
@@ -37,7 +38,13 @@ export function CS() {
   } | null>(null);
 
   const { leads, loading: leadsLoading, error: leadsError } = useLeads();
-  const { clients: mondayClients, loading: mondayLoading, error: mondayError } = useMondayClients();
+  const {
+    clients: mondayClients,
+    allClients: mondayAllClients,
+    biaActiveIds,
+    loading: mondayLoading,
+    error: mondayError,
+  } = useMondayClients();
   const {
     links,
     byAccount: linksByAccount,
@@ -59,16 +66,35 @@ export function CS() {
     [leads, range]
   );
 
+  // Inclui clientes com vínculo manual mesmo se não estão com Bia ativa.
+  const clientesParaMetricas = useMemo(() => {
+    if (mondayAllClients.length === 0) return mondayClients;
+    const idsAtivos = new Set(mondayClients.map((c) => c.id));
+    const idsComLink = new Set(links.map((l) => l.monday_client_id));
+    const extras = mondayAllClients.filter(
+      (c) => idsComLink.has(c.id) && !idsAtivos.has(c.id)
+    );
+    return extras.length === 0 ? mondayClients : [...mondayClients, ...extras];
+  }, [mondayClients, mondayAllClients, links]);
+
   const summary = useMemo(
     () =>
       computeCsMetrics({
-        clients: mondayClients,
+        clients: clientesParaMetricas,
         insights,
         leads: filteredLeads,
         metaLinks: linksByAccount,
         doutorLinks: doutorLinksByClient,
+        biaActiveIds,
       }),
-    [mondayClients, insights, filteredLeads, linksByAccount, doutorLinksByClient]
+    [
+      clientesParaMetricas,
+      insights,
+      filteredLeads,
+      linksByAccount,
+      doutorLinksByClient,
+      biaActiveIds,
+    ]
   );
 
   if (baseMissing.length > 0 || gestorMissing.length > 0) {

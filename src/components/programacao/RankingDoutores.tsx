@@ -12,8 +12,14 @@ export function RankingDoutores({ doutores }: Props) {
   const totalTransferidos = doutores.reduce((acc, d) => acc + d.totalTransferidos, 0);
   if (totalTransferidos === 0) return null;
 
+  // Mínimo de leads para ser considerado nas Melhores Taxas — evita doutores
+  // com volume muito baixo (ex: 2 leads, 2 transferidos = 100%) inflarem o topo.
+  const MIN_LEADS_TOP = 10;
+
   const sorted = [...doutores].sort((a, b) => b.taxa - a.taxa);
-  const top = sorted.filter((d) => d.totalTransferidos > 0).slice(0, 5);
+  const top = sorted
+    .filter((d) => d.totalTransferidos > 0 && d.totalLeads >= MIN_LEADS_TOP)
+    .slice(0, 5);
   const bottom = sorted
     .filter((d) => d.totalTransferidos > 0 || d.totalLeads >= 10)
     .slice(-5)

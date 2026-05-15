@@ -104,9 +104,18 @@ export function GestorCard({
             {gestor.clients.slice(0, 12).map((cm) => (
               <li
                 key={cm.client.id}
-                className="flex items-center gap-2 text-xs px-2 py-1 rounded bg-black/20"
+                className={[
+                  'flex items-center gap-2 text-xs px-2 py-1 rounded bg-black/20',
+                  cm.inactive ? 'opacity-50' : '',
+                ].join(' ')}
+                title={cm.inactive ? 'Sem Bia ativa — não conta no total' : undefined}
               >
                 <span className="flex-1 truncate text-white/85">{cm.client.name}</span>
+                {cm.inactive && (
+                  <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-burst-warning/15 text-burst-warning border border-burst-warning/30">
+                    inativo
+                  </span>
+                )}
                 <span className="text-burst-orange-bright font-mono">
                   {cm.transferencias}
                 </span>

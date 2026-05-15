@@ -39,8 +39,9 @@ export function computeCsMetrics(opts: {
   leads: RelatorioBias[];
   metaLinks: Map<string, ClientMetaLink>; // key: meta_account_id (act_xxx)
   doutorLinks?: Map<string, DoutorClientLink[]>;
+  biaActiveIds?: Set<string>;
 }): CsSummary {
-  const { clients, insights, leads, metaLinks, doutorLinks } = opts;
+  const { clients, insights, leads, metaLinks, doutorLinks, biaActiveIds } = opts;
 
   // Set de monday_client_id que têm vínculo Meta salvo
   const linkedMondayClientIds = new Set<string>();
@@ -50,7 +51,14 @@ export function computeCsMetrics(opts: {
 
   // Roda o computeGestorMetrics no conjunto completo pra reaproveitar lógica
   // de matching de doutor/leads/spend per-cliente.
-  const full = computeGestorMetrics({ clients, insights, leads, metaLinks, doutorLinks });
+  const full = computeGestorMetrics({
+    clients,
+    insights,
+    leads,
+    metaLinks,
+    doutorLinks,
+    biaActiveIds,
+  });
 
   // Achata os ClientMetrics em uma só lista (de todos gestores + clientsFora)
   // e filtra apenas os com link Meta salvo.
@@ -69,6 +77,7 @@ export function computeCsMetrics(opts: {
       leads: [],
       churned: false,
       churnCutoff: null,
+      inactive: false,
     })),
   ];
 
@@ -91,9 +100,11 @@ export function computeCsMetrics(opts: {
 
   const cses: CsMetrics[] = [];
   for (const [cs, cms] of byCs) {
-    const totalSpend = cms.reduce((s, c) => s + c.spend, 0);
-    const totalTransf = cms.reduce((s, c) => s + c.transferencias, 0);
-    const totalMensagens = cms.reduce((s, c) => s + c.mensagensIniciadas, 0);
+    // Totais SOMENTE somam clientes ativos (com Bia em fase ativa).
+    const ativos = cms.filter((c) => !c.inactive);
+    const totalSpend = ativos.reduce((s, c) => s + c.spend, 0);
+    const totalTransf = ativos.reduce((s, c) => s + c.transferencias, 0);
+    const totalMensagens = ativos.reduce((s, c) => s + c.mensagensIniciadas, 0);
     const cpt = totalTransf > 0 ? totalSpend / totalTransf : null;
     cses.push({
       cs,

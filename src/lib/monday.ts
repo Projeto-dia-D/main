@@ -375,8 +375,9 @@ export async function fetchMondayClients(): Promise<FetchClientsResult> {
 // para de contar nas métricas no próximo refresh.
 // ============================================================================
 const BIA_SOFT_BOARD_ID = '9887531051';
-const BIA_FASE_COL_ID = 'color_mktr1m3s';     // coluna "Fase" do board Bia Soft
-const BIA_RESP_COL_ID = 'person';              // coluna "Responsável" (people)
+const BIA_FASE_COL_ID = 'color_mktr1m3s';        // coluna "Fase" do board Bia Soft
+const BIA_RESP_COL_ID = 'person';                 // coluna "Responsável" (people)
+const BIA_CLIENT_REL_COL_ID = 'board_relation_mkzc177b'; // coluna "👥 Clientes" — link pro Monday principal
 
 // Fases que CONTAM (case-insensitive, sem acento, match por substring).
 const BIA_FASES_ATIVAS = [
@@ -399,7 +400,11 @@ const BIA_LIST_QUERY = `
         items {
           id
           name
-          column_values(ids: $colIds) { id text }
+          column_values(ids: $colIds) {
+            id
+            text
+            ... on BoardRelationValue { linked_item_ids }
+          }
         }
       }
     }
@@ -413,7 +418,11 @@ const BIA_NEXT_PAGE_QUERY = `
       items {
         id
         name
-        column_values { id text }
+        column_values {
+          id
+          text
+          ... on BoardRelationValue { linked_item_ids }
+        }
       }
     }
   }
@@ -422,7 +431,11 @@ const BIA_NEXT_PAGE_QUERY = `
 interface BiaItem {
   id: string;
   name: string;
-  column_values: Array<{ id: string; text: string | null }>;
+  column_values: Array<{
+    id: string;
+    text: string | null;
+    linked_item_ids?: string[];
+  }>;
 }
 
 interface BiaListResp {
@@ -453,12 +466,24 @@ function extractResponsavel(item: BiaItem): string | null {
   return cv?.text?.trim() || null;
 }
 
+function extractClientIds(item: BiaItem): string[] {
+  const cv = item.column_values.find((c) => c.id === BIA_CLIENT_REL_COL_ID);
+  return cv?.linked_item_ids ?? [];
+}
+
 export interface BiaSoftData {
-  /** Set de nomes (normalizados) de clientes com Fase ativa. */
+  /** Set de nomes (normalizados) — mantido por compat, mas use IDs quando possível. */
   activeNames: Set<string>;
-  /** Map<nomeNormalizado, responsavelName> — responsável pelo cliente. */
+  allNames: Set<string>;
+  /** Set de IDs (monday_client_id) com Bia em fase ATIVA — match exato e confiável. */
+  activeIds: Set<string>;
+  /** Set de IDs de TODOS os clientes vinculados no Bia Soft (qualquer fase). */
+  allIds: Set<string>;
+  /** Map<monday_client_id, responsável> — responsável pelo cliente. */
+  responsavelByClientId: Map<string, string>;
+  /** Mantido por compat. */
   responsavelByName: Map<string, string>;
-  /** Lista única de nomes de responsáveis (Gabriel, Eduardo) com Fase ativa. */
+  /** Lista única de responsáveis (Gabriel, Eduardo) com Fase ativa. */
   responsaveis: string[];
 }
 
@@ -469,20 +494,37 @@ export interface BiaSoftData {
  */
 export async function fetchBiaSoftData(): Promise<BiaSoftData> {
   const activeNames = new Set<string>();
+  const allNames = new Set<string>();
+  const activeIds = new Set<string>();
+  const allIds = new Set<string>();
   const responsavelByName = new Map<string, string>();
+  const responsavelByClientId = new Map<string, string>();
   const responsaveisSet = new Set<string>();
   if (!config.MONDAY_TOKEN) {
-    return { activeNames, responsavelByName, responsaveis: [] };
+    return {
+      activeNames, allNames, activeIds, allIds,
+      responsavelByName, responsavelByClientId,
+      responsaveis: [],
+    };
   }
 
   function process(it: BiaItem) {
-    if (!isFaseAtiva(extractFase(it))) return;
     const key = normalize(it.name);
-    activeNames.add(key);
+    if (!key) return;
+    allNames.add(key);
+    const isAtivo = isFaseAtiva(extractFase(it));
+    if (isAtivo) activeNames.add(key);
+    // Coluna 👥 Clientes — IDs do Monday principal vinculados a este item
+    const linkedIds = extractClientIds(it);
+    for (const cid of linkedIds) {
+      allIds.add(cid);
+      if (isAtivo) activeIds.add(cid);
+    }
     const resp = extractResponsavel(it);
     if (resp) {
       responsavelByName.set(key, resp);
-      responsaveisSet.add(resp);
+      for (const cid of linkedIds) responsavelByClientId.set(cid, resp);
+      if (isAtivo) responsaveisSet.add(resp);
     }
   }
 
@@ -490,7 +532,7 @@ export async function fetchBiaSoftData(): Promise<BiaSoftData> {
     const first = await gql<BiaListResp>(BIA_LIST_QUERY, {
       boardId: BIA_SOFT_BOARD_ID,
       limit: PAGE_LIMIT,
-      colIds: [BIA_FASE_COL_ID, BIA_RESP_COL_ID],
+      colIds: [BIA_FASE_COL_ID, BIA_RESP_COL_ID, BIA_CLIENT_REL_COL_ID],
     });
     const page = first.data?.boards?.[0]?.items_page;
     if (page) {
@@ -513,7 +555,11 @@ export async function fetchBiaSoftData(): Promise<BiaSoftData> {
 
   return {
     activeNames,
+    allNames,
+    activeIds,
+    allIds,
     responsavelByName,
+    responsavelByClientId,
     responsaveis: Array.from(responsaveisSet).sort(),
   };
 }
@@ -527,17 +573,66 @@ export async function fetchBiaSoftClientNames(): Promise<Set<string>> {
   return d.activeNames;
 }
 
-/** Match cliente Monday × lista de nomes do board Bia Soft. */
+// Stopwords usadas no match por palavras (Dra., conectivos, descritores)
+const NAME_STOPWORDS = new Set([
+  'dr', 'dra', 'drs', 'doutor', 'doutora',
+  'e', 'de', 'do', 'da', 'dos', 'das', 'a', 'o',
+  'sr', 'sra', 'instituto', 'clinica', 'odontologia', 'odontologica',
+  'consultorio', 'consultório',
+]);
+
+/** Tokeniza um nome (já normalizado) em palavras-chave relevantes. */
+function nameTokens(s: string): Set<string> {
+  const cleaned = s
+    .replace(/[.,()\-_\/]/g, ' ')   // remove pontuação
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return new Set();
+  const words = cleaned.split(' ').filter((w) => w && !NAME_STOPWORDS.has(w));
+  return new Set(words);
+}
+
+/**
+ * Match flexível entre dois nomes (já normalizados). Considera match se
+ * existirem pelo menos 2 palavras-chave em comum entre os dois conjuntos.
+ *
+ * Ex:
+ * - "thais e gustavo" vs "instituto jovanelli dra thais e dr gustavo"
+ *   → comum {thais, gustavo} = 2 → match ✓
+ * - "julio mota daniele mota" vs "clinica coi dr julio dra daniele"
+ *   → comum {julio, daniele} = 2 → match ✓
+ * - "bianca menezes" vs "bianca panza"
+ *   → comum {bianca} = 1 → não match ✓
+ */
+function namesMatchByWords(a: string, b: string): boolean {
+  const wa = nameTokens(a);
+  const wb = nameTokens(b);
+  if (wa.size < 2 || wb.size < 2) return false;
+  let common = 0;
+  for (const w of wa) if (wb.has(w)) common++;
+  return common >= 2;
+}
+
+/** Match cliente Monday × IDs do board Bia Soft (match exato via board_relation). */
+export function isClientNoBiaSoftById(
+  client: MondayClient,
+  biaIds: Set<string>
+): boolean {
+  if (biaIds.size === 0) return false;
+  return biaIds.has(client.id);
+}
+
+/** @deprecated Use isClientNoBiaSoftById — match por nome era frágil. */
 export function isClientNoBiaSoft(
   client: MondayClient,
   biaNames: Set<string>
 ): boolean {
-  if (biaNames.size === 0) return true; // sem dados → não filtra
+  if (biaNames.size === 0) return true;
   const n = normalize(client.name);
   if (biaNames.has(n)) return true;
-  // match substring nos dois sentidos pra acomodar pequenas variações
   for (const bn of biaNames) {
     if (n.includes(bn) || bn.includes(n)) return true;
+    if (namesMatchByWords(n, bn)) return true;
   }
   return false;
 }

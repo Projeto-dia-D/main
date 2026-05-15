@@ -11,7 +11,7 @@ import { computeGestorMetrics } from '../../lib/gestorMetrics';
 import { LeadsTable } from '../programacao/LeadsTable';
 import { TransferidosTable } from '../programacao/TransferidosTable';
 import { assertConfig, assertGestorConfig } from '../../config';
-import { DateRangeFilter } from '../programacao/DateRangeFilter';
+import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
 import { Modal } from '../Modal';
 import { PainelGeralGestor } from '../gestor/PainelGeralGestor';
 import { PainelMiniGestor } from '../gestor/PainelMiniGestor';
@@ -22,6 +22,7 @@ import { CampanhasTable } from '../gestor/CampanhasTable';
 import { GestoresTable } from '../gestor/GestoresTable';
 import { VinculacoesModal } from '../gestor/VinculacoesModal';
 import { DiagnosticoOrfaos } from '../gestor/DiagnosticoOrfaos';
+import { DiagnosticoCampanhasOrfas } from '../gestor/DiagnosticoCampanhasOrfas';
 
 type ModalKind = 'clientes' | 'campanhas' | 'gestores' | 'vinculos' | null;
 
@@ -29,7 +30,8 @@ export function GestorTrafego() {
   const baseMissing = assertConfig();
   const gestorMissing = assertGestorConfig();
 
-  const [range, setRange] = useState<DateRange>({ start: null, end: null });
+  // Aba abre por padrão filtrada pelo período "Dia D" (dia 12 do mês até hoje)
+  const [range, setRange] = useState<DateRange>(() => diaDRange());
   const [openModal, setOpenModal] = useState<ModalKind>(null);
   // Nome do gestor selecionado para drill-down com todos os seus clientes/doutores
   const [selectedGestor, setSelectedGestor] = useState<string | null>(null);
@@ -40,8 +42,13 @@ export function GestorTrafego() {
   } | null>(null);
 
   const { leads, loading: leadsLoading, error: leadsError } = useLeads();
-  const { clients: mondayClients, loading: mondayLoading, error: mondayError } =
-    useMondayClients();
+  const {
+    clients: mondayClients,
+    allClients: mondayAllClients,
+    biaActiveIds,
+    loading: mondayLoading,
+    error: mondayError,
+  } = useMondayClients();
   const {
     links,
     byAccount: linksByAccount,
@@ -76,16 +83,38 @@ export function GestorTrafego() {
     [leads, range]
   );
 
+  // Augmenta a lista de clientes com Bia ativa adicionando os clientes que
+  // têm vínculo Meta manual salvo, mesmo sem Bia ativa. Isso garante que ao
+  // vincular uma conta órfã a um cliente "inativo", o spend dele entre nas
+  // métricas imediatamente — sem precisar esperar voltar pra fase ativa.
+  const clientesParaMetricas = useMemo(() => {
+    if (mondayAllClients.length === 0) return mondayClients;
+    const idsAtivos = new Set(mondayClients.map((c) => c.id));
+    const idsComLink = new Set(links.map((l) => l.monday_client_id));
+    const extras = mondayAllClients.filter(
+      (c) => idsComLink.has(c.id) && !idsAtivos.has(c.id)
+    );
+    return extras.length === 0 ? mondayClients : [...mondayClients, ...extras];
+  }, [mondayClients, mondayAllClients, links]);
+
   const summary = useMemo(
     () =>
       computeGestorMetrics({
-        clients: mondayClients,
+        clients: clientesParaMetricas,
         insights,
         leads: filteredLeads,
         metaLinks: linksByAccount,
         doutorLinks: doutorLinksByClient,
+        biaActiveIds,
       }),
-    [mondayClients, insights, filteredLeads, linksByAccount, doutorLinksByClient]
+    [
+      clientesParaMetricas,
+      insights,
+      filteredLeads,
+      linksByAccount,
+      doutorLinksByClient,
+      biaActiveIds,
+    ]
   );
 
   const allClientMetrics = useMemo(
@@ -103,6 +132,7 @@ export function GestorTrafego() {
         leads: [],
         churned: false,
         churnCutoff: null,
+        inactive: false,
       }))
     ),
     [summary]
@@ -302,7 +332,7 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
             <DiagnosticoOrfaos
               orfaos={summary.orfaos}
               totalTransferenciasMapeadas={summary.totalTransferencias}
-              mondayClients={mondayClients}
+              mondayClients={mondayAllClients}
               linksByDoutor={doutorLinksByDoutor}
               onLink={setDoutorLink}
               onUnlink={removeDoutorLink}
@@ -311,15 +341,13 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
           )}
 
           {summary.campaignsOrfas.length > 0 && (
-            <div className="rounded-xl border border-burst-border bg-black/20 p-4">
-              <div className="text-xs uppercase tracking-widest text-burst-muted mb-2">
-                {summary.campaignsOrfas.length} campanha(s) Fim/Venda sem cliente casado
-              </div>
-              <div className="text-xs text-burst-muted">
-                Estas campanhas têm o padrão de nome mas nenhum cliente do Monday foi encontrado no
-                nome da campanha. O spend delas não está atribuído a nenhum gestor.
-              </div>
-            </div>
+            <DiagnosticoCampanhasOrfas
+              campaigns={summary.campaignsOrfas}
+              mondayClients={mondayAllClients}
+              linksByAccount={linksByAccount}
+              onLink={setLink}
+              onUnlink={removeLink}
+            />
           )}
         </>
       )}

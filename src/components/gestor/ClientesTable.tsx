@@ -59,11 +59,20 @@ export function ClientesTable({ clients }: Props) {
               return (
                 <tr
                   key={cm.client.id}
-                  className="border-t border-burst-border hover:bg-white/[0.02]"
+                  className={[
+                    'border-t border-burst-border hover:bg-white/[0.02]',
+                    cm.inactive ? 'opacity-60' : '',
+                  ].join(' ')}
+                  title={cm.inactive ? 'Sem Bia ativa — não conta no total do gestor/CS' : undefined}
                 >
                   <td className="px-3 py-2 text-white font-semibold">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <span>{cm.client.name}</span>
+                      {cm.inactive && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-burst-warning/15 text-burst-warning border border-burst-warning/30">
+                          inativo
+                        </span>
+                      )}
                       {cm.churned && (
                         <span
                           title={

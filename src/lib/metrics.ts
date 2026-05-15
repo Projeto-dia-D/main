@@ -28,14 +28,32 @@ const INTERROMPIDO_PATTERNS = [
 
 // Doutores cujos leads são armazenados mas NÃO contam em transferências/CPT.
 // Toda lead presente OU futura com nomeDoutor contendo um destes termos
-// (case-insensitive, sem acento) é classificada como "Chat incompleto".
-// Match: substring no nome normalizado.
+// (case-insensitive, sem acento) é classificada como "Chat incompleto" e
+// aparece em uma seção separada da aba Programação.
 const DOUTORES_CHAT_INCOMPLETO = [
   'daiane feduk',
   'sorriso recife',
   'vitaprime',           // VitaPrime Clínica Odontológica
   'vita prime',          // variação com espaço
   'vitta prime',         // grafia antiga com 2 T (mantém compat com dados existentes)
+  'mayara ventura',      // aparece em Chats Incompletos, não conta em Gestor/CS
+];
+
+// Doutores totalmente desconsiderados — leads NÃO aparecem em nenhuma seção
+// (nem em Chats Incompletos). Usado para clientes que estão sendo excluídos
+// das métricas em TODAS as abas (Programação + Gestor + CS).
+const DOUTORES_DESCONSIDERADOS = [
+  'cassiano vieira',
+  'cassiano veieira',    // grafia alternativa no UAZAPI
+  'jadson lucas',
+  'simone justo',
+];
+
+// Doutores escondidos APENAS da aba Programação (continuam em Gestor/CS).
+// Usado quando o doutor não faz sentido pro acompanhamento de programadores
+// mas ainda gera spend/transferências válidos pra gestor e CS.
+const DOUTORES_OCULTOS_PROGRAMACAO: string[] = [
+  // (vazio por enquanto)
 ];
 
 function normalize(text: string | null | undefined): string {
@@ -63,15 +81,32 @@ export function isChatIncompleto(lead: RelatorioBias): boolean {
   return DOUTORES_CHAT_INCOMPLETO.some((p) => n.includes(p));
 }
 
+/** Lead de doutor totalmente desconsiderado — não aparece em lugar nenhum. */
+export function isDesconsiderado(lead: RelatorioBias): boolean {
+  const n = normalize(lead.nomeDoutor);
+  if (!n) return false;
+  return DOUTORES_DESCONSIDERADOS.some((p) => n.includes(p));
+}
+
+/** Lead de doutor escondido apenas da aba Programação. */
+export function isOcultoProgramacao(lead: RelatorioBias): boolean {
+  const n = normalize(lead.nomeDoutor);
+  if (!n) return false;
+  return DOUTORES_OCULTOS_PROGRAMACAO.some((p) => n.includes(p));
+}
+
 /**
  * Checa se um NOME (de cliente Monday, ou de doutor) bate com a lista de
- * "chat incompleto" — usado pra desqualificar o cliente inteiro nas métricas
- * de Gestor/CS, não só os leads dele.
+ * "chat incompleto" OU "desconsiderados" — usado pra desqualificar o
+ * cliente inteiro nas métricas de Gestor/CS.
  */
 export function isNomeChatIncompleto(nome: string | null | undefined): boolean {
   const n = normalize(nome);
   if (!n) return false;
-  return DOUTORES_CHAT_INCOMPLETO.some((p) => n.includes(p));
+  return (
+    DOUTORES_CHAT_INCOMPLETO.some((p) => n.includes(p)) ||
+    DOUTORES_DESCONSIDERADOS.some((p) => n.includes(p))
+  );
 }
 
 /**
@@ -125,7 +160,7 @@ export function resolveNomeDoutor(
 }
 
 export function tierForTaxa(taxa: number): SalaryTier {
-  if (taxa > 20) return 1;
+  if (taxa >= 20) return 1;
   if (taxa >= 16) return 0.5;
   return 0;
 }
@@ -262,14 +297,22 @@ export function computeMetrics(
   const now = new Date();
   const evolucaoEnd = range?.end ?? now;
 
+  // Doutores totalmente desconsiderados são REMOVIDOS do dataset antes de
+  // qualquer categorização — não aparecem em nenhuma seção do dashboard.
+  // E os "ocultos da Programação" também (só aplicado aqui, pois Gestor/CS
+  // usam outras funções de cálculo).
+  const leadsVisiveis = leads.filter(
+    (l) => !isDesconsiderado(l) && !isOcultoProgramacao(l)
+  );
+
   // Categorias excluídas das métricas (armazenadas mas não contam):
   //   - chats interrompidos (motivo)
   //   - chats incompletos (doutor na lista fixa)
-  const chatsInterrompidos = leads.filter(isInterrompido);
-  const chatsIncompletos = leads.filter(
+  const chatsInterrompidos = leadsVisiveis.filter(isInterrompido);
+  const chatsIncompletos = leadsVisiveis.filter(
     (l) => !isInterrompido(l) && isChatIncompleto(l)
   );
-  let activeLeads = leads.filter(
+  let activeLeads = leadsVisiveis.filter(
     (l) => !isInterrompido(l) && !isChatIncompleto(l)
   );
 
@@ -371,16 +414,16 @@ export function progressToNextTier(taxa: number): {
   pctOfBar: number;
   remaining: number;
 } {
-  if (taxa > 20) {
+  if (taxa >= 20) {
     return { nextLabel: 'Faixa máxima atingida', pctOfBar: 100, remaining: 0 };
   }
   if (taxa >= 16) {
     const span = 20 - 16;
     const progress = ((taxa - 16) / span) * 100;
     return {
-      nextLabel: 'até 1 salário (>20%)',
+      nextLabel: 'até 1 salário (≥20%)',
       pctOfBar: Math.min(100, Math.max(0, progress)),
-      remaining: Number(Math.max(0, 20.01 - taxa).toFixed(1)),
+      remaining: Number(Math.max(0, 20 - taxa).toFixed(1)),
     };
   }
   const progress = (taxa / 16) * 100;
