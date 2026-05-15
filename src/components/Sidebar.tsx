@@ -1,7 +1,7 @@
-import { Code2, Palette, Headphones, Megaphone, type LucideIcon } from 'lucide-react';
+import { Code2, Palette, Headphones, Megaphone, CalendarDays, type LucideIcon } from 'lucide-react';
 import { BrandTitle } from './BrandTitle';
 
-export type TabKey = 'programacao' | 'design' | 'cs' | 'gestor';
+export type TabKey = 'programacao' | 'design' | 'cs' | 'gestor' | 'calendario';
 
 interface Props {
   active: TabKey;
@@ -13,6 +13,7 @@ const ITEMS: { key: TabKey; label: string; icon: LucideIcon }[] = [
   { key: 'design', label: 'Design', icon: Palette },
   { key: 'cs', label: 'CS', icon: Headphones },
   { key: 'gestor', label: 'Gestor de Tráfego', icon: Megaphone },
+  { key: 'calendario', label: 'Calendário', icon: CalendarDays },
 ];
 
 export function Sidebar({ active, onChange }: Props) {

@@ -18,6 +18,8 @@ export interface UseMondayClientsResult {
   biaAllIds: Set<string>;
   /** Map<monday_client_id → responsável>. */
   responsavelByClientId: Map<string, string>;
+  /** Map<nome_normalizado → responsável> — mantido pra Programação que só tem nome do doutor. */
+  responsavelByName: Map<string, string>;
   /** Lista única de responsáveis (Gabriel, Eduardo) com pelo menos 1 ativo. */
   responsaveis: string[];
   loading: boolean;
@@ -38,6 +40,7 @@ interface CachedBia {
   allIds: string[];
   activeIds: string[];
   responsavelByClientId: [string, string][];
+  responsavelByName?: [string, string][];
   responsaveis: string[];
 }
 
@@ -49,6 +52,9 @@ export function useMondayClients(): UseMondayClientsResult {
   const initialActiveIds = new Set<string>(cachedBia?.value.activeIds ?? []);
   const initialRespMap = new Map<string, string>(
     cachedBia?.value.responsavelByClientId ?? []
+  );
+  const initialRespByName = new Map<string, string>(
+    cachedBia?.value.responsavelByName ?? []
   );
   const initialRespList = cachedBia?.value.responsaveis ?? [];
   const initialAll = cachedClients?.value.clients ?? [];
@@ -64,6 +70,7 @@ export function useMondayClients(): UseMondayClientsResult {
   const [biaActiveIds, setBiaActiveIds] = useState<Set<string>>(initialActiveIds);
   const [biaAllIds, setBiaAllIds] = useState<Set<string>>(initialAllIds);
   const [responsavelByClientId, setResponsavelByClientId] = useState<Map<string, string>>(initialRespMap);
+  const [responsavelByName, setResponsavelByName] = useState<Map<string, string>>(initialRespByName);
   const [responsaveis, setResponsaveis] = useState<string[]>(initialRespList);
   const [loading, setLoading] = useState(initialAll.length === 0);
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +94,7 @@ export function useMondayClients(): UseMondayClientsResult {
         setBiaActiveIds(biaData.activeIds);
         setBiaAllIds(biaData.allIds);
         setResponsavelByClientId(biaData.responsavelByClientId);
+        setResponsavelByName(biaData.responsavelByName);
         setResponsaveis(biaData.responsaveis);
         setError(null);
         setLastUpdate(new Date());
@@ -96,6 +104,7 @@ export function useMondayClients(): UseMondayClientsResult {
           allIds: Array.from(biaData.allIds),
           activeIds: Array.from(biaData.activeIds),
           responsavelByClientId: Array.from(biaData.responsavelByClientId.entries()),
+          responsavelByName: Array.from(biaData.responsavelByName.entries()),
           responsaveis: biaData.responsaveis,
         });
       } catch (e) {
@@ -120,6 +129,7 @@ export function useMondayClients(): UseMondayClientsResult {
     biaActiveIds,
     biaAllIds,
     responsavelByClientId,
+    responsavelByName,
     responsaveis,
     loading,
     error,

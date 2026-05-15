@@ -4,13 +4,15 @@ import { BrandTitle } from './components/BrandTitle';
 import { Programacao } from './components/tabs/Programacao';
 import { GestorTrafego } from './components/tabs/GestorTrafego';
 import { CS } from './components/tabs/CS';
-import { Placeholder } from './components/tabs/Placeholder';
+import { Design } from './components/tabs/Design';
+import { Calendario } from './components/tabs/Calendario';
 
 const TAB_TITLES: Record<TabKey, string> = {
   programacao: 'Programação',
   design: 'Design',
   cs: 'CS',
   gestor: 'Gestor de Tráfego',
+  calendario: 'Calendário',
 };
 
 export default function App() {
@@ -33,14 +35,10 @@ export default function App() {
         </header>
         <div className="flex-1 overflow-y-auto scrollbar-thin">
           {active === 'programacao' && <Programacao />}
-          {active === 'design' && (
-            <Placeholder
-              title="Design"
-              description="Aqui vão entrar as métricas da equipe de Design (demandas/dia, custo por entrega). Estrutura preparada — basta plugar os dados."
-            />
-          )}
+          {active === 'design' && <Design />}
           {active === 'cs' && <CS />}
           {active === 'gestor' && <GestorTrafego />}
+          {active === 'calendario' && <Calendario />}
         </div>
       </main>
     </div>

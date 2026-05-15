@@ -76,6 +76,55 @@ export function isGestorExcluido(nome: string | null | undefined): boolean {
   return GESTORES_EXCLUIDOS.some((g) => n === g || n.includes(g));
 }
 
+// Designers ATIVOS no time. Outros nomes (ex-funcionários, freelas pontuais)
+// não aparecem na aba Design. Adicione/remova quando o time mudar.
+// O match é substring case-insensitive, sem acento.
+export const DESIGNERS_ATIVOS = [
+  'felipe moraes',
+  'paulo henrique',
+  'lais beisheim',
+];
+
+export function isDesignerAtivo(nome: string | null | undefined): boolean {
+  if (!nome) return false;
+  const n = nome
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .trim();
+  return DESIGNERS_ATIVOS.some((d) => n.includes(d));
+}
+
+// Mapeamento "fragmento canônico" → "label de exibição".
+// Necessário porque o Monday pode trazer "Felipe Moraes, Jean Carlos Tigre"
+// (designer dividido). Queremos atribuir essa demanda APENAS ao designer ativo
+// (Felipe), nunca aparecer combo na UI.
+export const DESIGNER_LABELS: Record<string, string> = {
+  'felipe moraes': 'Felipe Moraes',
+  'paulo henrique': 'Paulo Henrique Pires Da Silva',
+  'lais beisheim': 'Lais Beisheim',
+};
+
+/**
+ * Pra um campo `designer_responsavel` que pode conter múltiplos nomes
+ * (separados por vírgula, ex: "Felipe Moraes, Jean Carlos Tigre"), retorna
+ * o LABEL canônico do PRIMEIRO designer ativo encontrado. Retorna null se
+ * nenhum ativo casar (designer 100% inativo ou sem nome).
+ */
+export function primeiroDesignerAtivo(nome: string | null | undefined): string | null {
+  if (!nome) return null;
+  const partes = nome.split(',').map((p) => p.trim()).filter(Boolean);
+  for (const parte of partes) {
+    const n = parte.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    for (const fragmento of DESIGNERS_ATIVOS) {
+      if (n.includes(fragmento)) {
+        return DESIGNER_LABELS[fragmento] ?? parte;
+      }
+    }
+  }
+  return null;
+}
+
 // Fingerprint do token (primeiros 6 chars + tamanho) pra diagnóstico no UI.
 // Não expõe o token completo.
 export function tokenFingerprint(token: string): string {

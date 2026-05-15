@@ -31,7 +31,7 @@ export function Programacao() {
   // Clients são carregados pra aplicar o corte de churn por cliente.
   // Programação usa TODOS os clientes (não apenas com Bia) pra que o churn
   // cutoff funcione independente do filtro de Bia Soft.
-  const { allClients: mondayClients, responsavelByClient, responsaveis } =
+  const { allClients: mondayClients, responsavelByName: responsavelByClient, responsaveis } =
     useMondayClients();
 
   const [range, setRange] = useState<DateRange>({ start: null, end: null });

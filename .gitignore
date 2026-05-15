@@ -4,3 +4,14 @@ dist
 .env.local
 *.log
 .DS_Store
+
+# Build artifacts e config local
+.claude/
+tsconfig.tsbuildinfo
+
+# Logs locais do backfill diário (gerados pelo Task Scheduler)
+logs/
+
+# Supabase CLI cache
+supabase/.temp/
+supabase/.branches/
