@@ -42,7 +42,8 @@ function ontemRange(): DateRange {
 
 // Período Dia D: a partir do dia 12 do mês corrente até hoje.
 // (mês 0-indexado em Date: maio = 4, mas usamos getMonth() pra acompanhar o mês atual)
-function diaDRange(): DateRange {
+// Exportada pra que outras abas (Gestor / CS) possam usar como filtro inicial.
+export function diaDRange(): DateRange {
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), 12, 0, 0, 0, 0);
   const end = new Date();

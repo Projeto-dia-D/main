@@ -25,6 +25,9 @@ export interface ClientMetrics {
   leads: RelatorioBias[];               // leads atribuídos a esse cliente (já com churn aplicado)
   churned: boolean;                     // status atual contém "perdido"/"churn"
   churnCutoff: Date | null;             // data de corte aplicada (se churned)
+  /** Cliente está no board Bia Soft mas em fase NÃO ativa (Pausado, Churn, etc.).
+   *  Campanhas e leads continuam visíveis, mas spend NÃO entra nos totais do gestor/CS. */
+  inactive: boolean;
 }
 
 export interface GestorMetrics {
@@ -188,12 +191,25 @@ export function computeGestorMetrics(opts: {
   leads: RelatorioBias[];
   metaLinks?: Map<string, ClientMetaLink>;       // key: meta_account_id (act_xxx)
   doutorLinks?: Map<string, DoutorClientLink[]>; // key: monday_client_id → links manuais
+  /** Set de IDs (monday_client_id) de clientes com Bia em fase ATIVA.
+   *  Match exato via board_relation no Bia Soft — sem mais matching por nome.
+   *  Clientes fora desse set entram como `inactive: true`. */
+  biaActiveIds?: Set<string>;
 }): GestorSummary {
-  const { insights, leads, metaLinks, doutorLinks } = opts;
+  const { insights, leads, metaLinks, doutorLinks, biaActiveIds } = opts;
 
-  // 0) Remove da lista de clientes os que estão na lista de "chat incompleto"
-  // (Daiane Feduk, Sorriso Recife, VitaPrime, etc.). Eles foram desqualificados
-  // do dashboard de Programação e também não devem aparecer pro Gestor/CS.
+  // Helper: cliente está ativo na Bia? Match exato por monday_client_id via
+  // coluna board_relation "👥 Clientes" no board Bia Soft. Sem mais ambiguidade
+  // de nomes — se o ID do cliente está em biaActiveIds, ele está ativo.
+  function isClienteAtivo(cl: MondayClient): boolean {
+    if (!biaActiveIds || biaActiveIds.size === 0) return true;
+    return biaActiveIds.has(cl.id);
+  }
+
+  // 0) Remove SEMPRE da lista de clientes os que estão em "chat incompleto"
+  // (Daiane Feduk, Sorriso Recife, VitaPrime, Mayara Ventura). Eles não contam
+  // no Gestor/CS mesmo que tenham vínculo Meta salvo — se o usuário quer
+  // contar, precisa remover o nome da lista DOUTORES_CHAT_INCOMPLETO no código.
   const clients = opts.clients.filter((c) => !isNomeChatIncompleto(c.name));
 
   // 1) Leads ativos (ignora chats interrompidos e chats incompletos)
@@ -332,6 +348,7 @@ export function computeGestorMetrics(opts: {
       leads: leadsDoCliente,
       churned,
       churnCutoff,
+      inactive: !isClienteAtivo(cl),
     };
   });
 
@@ -352,9 +369,13 @@ export function computeGestorMetrics(opts: {
 
   const gestores: GestorMetrics[] = [];
   for (const [gestor, cms] of byGestor) {
-    const totalSpend = cms.reduce((s, c) => s + c.spend, 0);
-    const totalTransf = cms.reduce((s, c) => s + c.transferencias, 0);
-    const totalMensagens = cms.reduce((s, c) => s + c.mensagensIniciadas, 0);
+    // Totais SOMENTE somam clientes ativos (com Bia em fase I.A ativa/Manutenção).
+    // Clientes inativos continuam visíveis na lista `clients` mas não inflam
+    // as métricas agregadas do gestor.
+    const ativos = cms.filter((c) => !c.inactive);
+    const totalSpend = ativos.reduce((s, c) => s + c.spend, 0);
+    const totalTransf = ativos.reduce((s, c) => s + c.transferencias, 0);
+    const totalMensagens = ativos.reduce((s, c) => s + c.mensagensIniciadas, 0);
     const cpt = totalTransf > 0 ? totalSpend / totalTransf : null;
     gestores.push({
       gestor,

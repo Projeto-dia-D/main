@@ -2,57 +2,68 @@ import { useEffect, useState } from 'react';
 import {
   fetchMondayClients,
   fetchBiaSoftData,
-  isClientNoBiaSoft,
+  isClientNoBiaSoftById,
   type MondayClient,
 } from '../lib/monday';
 import { readCacheWithMeta, writeCache } from '../lib/cache';
 
 export interface UseMondayClientsResult {
-  clients: MondayClient[];                  // filtrados pelos com Bia ativa
-  allClients: MondayClient[];               // raw do board principal
-  biaNames: Set<string>;                    // nomes (normalizados) com Bia ativa
-  responsavelByClient: Map<string, string>; // nome normalizado → responsável
-  responsaveis: string[];                   // lista única (Gabriel, Eduardo, …)
+  /** Clientes Monday que estão vinculados ao board Bia Soft (qualquer fase). */
+  clients: MondayClient[];
+  /** Lista crua do board principal Monday — sem filtro. */
+  allClients: MondayClient[];
+  /** Set de IDs com Bia em fase ATIVA (I.A ativa / Manutenção). */
+  biaActiveIds: Set<string>;
+  /** Set de IDs de todos os clientes vinculados no Bia Soft (qualquer fase). */
+  biaAllIds: Set<string>;
+  /** Map<monday_client_id → responsável>. */
+  responsavelByClientId: Map<string, string>;
+  /** Lista única de responsáveis (Gabriel, Eduardo) com pelo menos 1 ativo. */
+  responsaveis: string[];
   loading: boolean;
   error: string | null;
   lastUpdate: Date | null;
 }
 
-const REFRESH_MS = 1000 * 30; // 30s — mudanças de Fase aparecem quase em tempo real
+const REFRESH_MS = 1000 * 60 * 10; // 10 min
 const CACHE_KEY_CLIENTS = 'monday:clients:v2';
-// v5: adicionado mapa de responsáveis — invalida cache antigo
-const CACHE_KEY_BIA = 'monday:biaData:v5';
+// v8: agora usa IDs (board_relation) em vez de match por nome
+const CACHE_KEY_BIA = 'monday:biaData:v8';
 
 interface CachedClients {
   clients: MondayClient[];
 }
 
 interface CachedBia {
-  names: string[];
-  responsavelByName: [string, string][]; // serializado pra JSON
+  allIds: string[];
+  activeIds: string[];
+  responsavelByClientId: [string, string][];
   responsaveis: string[];
 }
 
 export function useMondayClients(): UseMondayClientsResult {
-  // Lê cache imediatamente — tela já renderiza com dados anteriores
   const cachedClients = readCacheWithMeta<CachedClients>(CACHE_KEY_CLIENTS);
   const cachedBia = readCacheWithMeta<CachedBia>(CACHE_KEY_BIA);
 
-  const initialBia = new Set<string>(cachedBia?.value.names ?? []);
+  const initialAllIds = new Set<string>(cachedBia?.value.allIds ?? []);
+  const initialActiveIds = new Set<string>(cachedBia?.value.activeIds ?? []);
   const initialRespMap = new Map<string, string>(
-    cachedBia?.value.responsavelByName ?? []
+    cachedBia?.value.responsavelByClientId ?? []
   );
   const initialRespList = cachedBia?.value.responsaveis ?? [];
   const initialAll = cachedClients?.value.clients ?? [];
-  const initialFiltered = initialAll.filter((c) => isClientNoBiaSoft(c, initialBia));
+  const initialFiltered = initialAll.filter((c) =>
+    isClientNoBiaSoftById(c, initialAllIds)
+  );
   const initialUpdate = cachedClients
     ? new Date(Math.min(cachedClients.savedAt, cachedBia?.savedAt ?? cachedClients.savedAt))
     : null;
 
   const [clients, setClients] = useState<MondayClient[]>(initialFiltered);
   const [allClients, setAllClients] = useState<MondayClient[]>(initialAll);
-  const [biaNames, setBiaNames] = useState<Set<string>>(initialBia);
-  const [responsavelByClient, setResponsavelByClient] = useState<Map<string, string>>(initialRespMap);
+  const [biaActiveIds, setBiaActiveIds] = useState<Set<string>>(initialActiveIds);
+  const [biaAllIds, setBiaAllIds] = useState<Set<string>>(initialAllIds);
+  const [responsavelByClientId, setResponsavelByClientId] = useState<Map<string, string>>(initialRespMap);
   const [responsaveis, setResponsaveis] = useState<string[]>(initialRespList);
   const [loading, setLoading] = useState(initialAll.length === 0);
   const [error, setError] = useState<string | null>(null);
@@ -69,20 +80,22 @@ export function useMondayClients(): UseMondayClientsResult {
         ]);
         if (!active) return;
         const filtered = mainResult.clients.filter((c) =>
-          isClientNoBiaSoft(c, biaData.activeNames)
+          isClientNoBiaSoftById(c, biaData.allIds)
         );
         setAllClients(mainResult.clients);
         setClients(filtered);
-        setBiaNames(biaData.activeNames);
-        setResponsavelByClient(biaData.responsavelByName);
+        setBiaActiveIds(biaData.activeIds);
+        setBiaAllIds(biaData.allIds);
+        setResponsavelByClientId(biaData.responsavelByClientId);
         setResponsaveis(biaData.responsaveis);
         setError(null);
         setLastUpdate(new Date());
 
         writeCache<CachedClients>(CACHE_KEY_CLIENTS, { clients: mainResult.clients });
         writeCache<CachedBia>(CACHE_KEY_BIA, {
-          names: Array.from(biaData.activeNames),
-          responsavelByName: Array.from(biaData.responsavelByName.entries()),
+          allIds: Array.from(biaData.allIds),
+          activeIds: Array.from(biaData.activeIds),
+          responsavelByClientId: Array.from(biaData.responsavelByClientId.entries()),
           responsaveis: biaData.responsaveis,
         });
       } catch (e) {
@@ -104,8 +117,9 @@ export function useMondayClients(): UseMondayClientsResult {
   return {
     clients,
     allClients,
-    biaNames,
-    responsavelByClient,
+    biaActiveIds,
+    biaAllIds,
+    responsavelByClientId,
     responsaveis,
     loading,
     error,

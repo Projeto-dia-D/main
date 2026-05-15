@@ -15,7 +15,7 @@ const TIER_CONFIG: Record<SalaryTier, {
   barClass: string;
 }> = {
   1: {
-    src: '/img-top.png',
+    src: '/image.png',
     alt: 'Mandando muito bem',
     borderColor: 'rgba(34,197,94,0.5)',
     glowColor: 'rgba(34,197,94,0.35)',
@@ -50,33 +50,38 @@ export function TierImage({ tier }: Props) {
   const cfg = TIER_CONFIG[tier];
 
   return (
-    <div key={tier} className="flex flex-col gap-0 animate-fade-in rounded-2xl overflow-hidden"
+    <div
+      key={tier}
+      className="flex flex-col gap-0 animate-fade-in rounded-2xl overflow-hidden bg-burst-card w-full"
       style={{
         border: `1px solid ${cfg.borderColor}`,
         boxShadow: `0 0 48px ${cfg.glowColor}, 0 0 120px ${cfg.glowColor.replace('0.35', '0.12')}`,
       }}
     >
-      {/* Imagem — sem nada por cima */}
-      <div className="relative" style={{ minHeight: 340 }}>
+      {/*
+        Quadrado da imagem: largura total do card (mesma dos painéis ao redor)
+        e altura igual à largura — o que dá um QUADRADO GIGANTE.
+      */}
+      <div className="w-full aspect-square overflow-hidden">
         <img
           src={cfg.src}
           alt={cfg.alt}
-          className="absolute inset-0 w-full h-full object-cover object-center"
+          className="block w-full h-full object-cover"
           draggable={false}
         />
       </div>
 
-      {/* Mensagem motivacional — abaixo da imagem, dentro do mesmo card */}
-      <div className="bg-burst-card px-8 py-5 flex items-center gap-5">
+      {/* Mensagem motivacional — barra inferior */}
+      <div className="w-full px-8 py-6 flex items-center gap-5">
         <div
           className="w-1 self-stretch rounded-full shrink-0"
           style={{ background: cfg.glowColor.replace('0.35', '0.9') }}
         />
-        <div className="flex flex-col gap-1 min-w-0">
-          <span className={`font-display text-2xl tracking-wider leading-none ${cfg.textClass}`}>
+        <div className="flex flex-col gap-1.5 min-w-0">
+          <span className={`font-display text-3xl tracking-wider leading-tight ${cfg.textClass}`}>
             {cfg.message}
           </span>
-          <span className="text-burst-muted text-sm">
+          <span className="text-burst-muted text-base leading-snug">
             {cfg.subMessage}
           </span>
         </div>
