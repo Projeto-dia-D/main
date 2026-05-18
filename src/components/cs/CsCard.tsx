@@ -80,7 +80,7 @@ export function CsCard({
         </StatBox>
         <StatBox
           icon={<DollarSign size={11} />}
-          label="Spend"
+          label="Gasto"
           onClick={onClickSpend}
         >
           <span className="font-display text-lg text-white truncate">{brl(cs.totalSpend)}</span>

@@ -12,7 +12,9 @@ export interface UseMetaSpendResult {
 }
 
 const REFRESH_MS = 1000 * 60 * 3; // 3 min — equilibrio entre frescor e rate limit do Meta
-const CACHE_PREFIX = 'meta:insights:v1:';
+// v2: insights agora em granularidade diaria (time_increment=1) pra suportar
+// exclusao de periodos em Manutencao via timeline do Bia Soft
+const CACHE_PREFIX = 'meta:insights:v2:';
 
 interface CachedInsights {
   insights: CampaignInsight[];
@@ -67,7 +69,7 @@ export function useMetaSpend(
       // Só mostra "loading" se não temos cache pra exibir
       if (!c) setLoading(true);
       try {
-        const { insights: rows, errors: errs } = await fetchInsightsForLinks(range, links);
+        const { insights: rows, errors: errs } = await fetchInsightsForLinks(range, links, true);
         if (!active) return;
         setInsights(rows);
         setErrors(errs);

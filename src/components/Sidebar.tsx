@@ -1,4 +1,4 @@
-import { Code2, Palette, Headphones, Megaphone, CalendarDays, type LucideIcon } from 'lucide-react';
+import { Code2, Palette, Headphones, Megaphone, CalendarDays, ChevronLeft, ChevronRight, type LucideIcon } from 'lucide-react';
 import { BrandTitle } from './BrandTitle';
 
 export type TabKey = 'programacao' | 'design' | 'cs' | 'gestor' | 'calendario';
@@ -6,6 +6,8 @@ export type TabKey = 'programacao' | 'design' | 'cs' | 'gestor' | 'calendario';
 interface Props {
   active: TabKey;
   onChange: (k: TabKey) => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }
 
 const ITEMS: { key: TabKey; label: string; icon: LucideIcon }[] = [
@@ -16,14 +18,34 @@ const ITEMS: { key: TabKey; label: string; icon: LucideIcon }[] = [
   { key: 'calendario', label: 'Calendário', icon: CalendarDays },
 ];
 
-export function Sidebar({ active, onChange }: Props) {
+export function Sidebar({ active, onChange, collapsed, onToggleCollapsed }: Props) {
   return (
-    <aside className="w-60 shrink-0 bg-burst-panel border-r border-burst-border flex flex-col">
-      <div className="px-5 py-5 border-b border-burst-border">
-        <BrandTitle size="lg" />
+    <aside
+      className={[
+        'shrink-0 bg-burst-panel border-r border-burst-border flex flex-col transition-all duration-200',
+        collapsed ? 'w-16' : 'w-60',
+      ].join(' ')}
+    >
+      <div
+        className={[
+          'border-b border-burst-border flex items-center gap-2',
+          collapsed ? 'px-2 py-4 justify-center' : 'px-5 py-5',
+        ].join(' ')}
+      >
+        {!collapsed && <BrandTitle size="lg" />}
+        <button
+          onClick={onToggleCollapsed}
+          title={collapsed ? 'Expandir menu' : 'Recolher menu'}
+          className={[
+            'rounded-lg p-1.5 text-burst-muted hover:bg-white/5 hover:text-white transition-colors',
+            collapsed ? '' : 'ml-auto',
+          ].join(' ')}
+        >
+          {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+        </button>
       </div>
 
-      <nav className="flex flex-col px-3 py-4 gap-1">
+      <nav className={['flex flex-col py-4 gap-1', collapsed ? 'px-2' : 'px-3'].join(' ')}>
         {ITEMS.map((it) => {
           const Icon = it.icon;
           const isActive = active === it.key;
@@ -31,8 +53,10 @@ export function Sidebar({ active, onChange }: Props) {
             <button
               key={it.key}
               onClick={() => onChange(it.key)}
+              title={collapsed ? it.label : undefined}
               className={[
-                'group flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all',
+                'group flex items-center gap-3 rounded-lg text-sm font-medium transition-all',
+                collapsed ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5',
                 isActive
                   ? 'bg-burst-orange/15 text-burst-orange-bright shadow-orange-glow-sm'
                   : 'text-burst-muted hover:bg-white/5 hover:text-white',
@@ -44,8 +68,8 @@ export function Sidebar({ active, onChange }: Props) {
                   isActive ? 'text-burst-orange-bright' : 'text-burst-muted group-hover:text-white'
                 }
               />
-              <span>{it.label}</span>
-              {isActive && (
+              {!collapsed && <span>{it.label}</span>}
+              {!collapsed && isActive && (
                 <span className="ml-auto w-1.5 h-1.5 rounded-full bg-burst-orange animate-pulse" />
               )}
             </button>
@@ -53,12 +77,14 @@ export function Sidebar({ active, onChange }: Props) {
         })}
       </nav>
 
-      <div className="mt-auto px-5 py-4 border-t border-burst-border">
-        <div className="text-[10px] uppercase tracking-widest text-burst-muted">
-          versão
+      {!collapsed && (
+        <div className="mt-auto px-5 py-4 border-t border-burst-border">
+          <div className="text-[10px] uppercase tracking-widest text-burst-muted">
+            versão
+          </div>
+          <div className="text-xs text-white/70 font-mono">v1.0.0</div>
         </div>
-        <div className="text-xs text-white/70 font-mono">v1.0.0</div>
-      </div>
+      )}
     </aside>
   );
 }

@@ -37,7 +37,7 @@ export function GestoresTable({ gestores }: Props) {
             <tr>
               <th className="text-left px-3 py-2 font-semibold">Gestor</th>
               <th className="text-right px-3 py-2 font-semibold">Clientes</th>
-              <th className="text-right px-3 py-2 font-semibold">Spend</th>
+              <th className="text-right px-3 py-2 font-semibold">Gasto</th>
               <th className="text-right px-3 py-2 font-semibold">Transf.</th>
               <th className="text-right px-3 py-2 font-semibold">CPT</th>
             </tr>

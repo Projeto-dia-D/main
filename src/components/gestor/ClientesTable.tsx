@@ -47,7 +47,7 @@ export function ClientesTable({ clients }: Props) {
               <th className="text-left px-3 py-2 font-semibold">CS</th>
               <th className="text-left px-3 py-2 font-semibold">Doutor (DB)</th>
               <th className="text-center px-3 py-2 font-semibold">Vínculo</th>
-              <th className="text-right px-3 py-2 font-semibold">Spend</th>
+              <th className="text-right px-3 py-2 font-semibold">Gasto</th>
               <th className="text-right px-3 py-2 font-semibold">Transf.</th>
               <th className="text-right px-3 py-2 font-semibold">CPT</th>
             </tr>

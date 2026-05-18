@@ -20,12 +20,16 @@ export interface CampaignInsight {
   gestor: GestorName;
   accountId: string;
   accountName: string;
+  /** Data do registro quando vem em granularidade diária (time_increment=1).
+   *  Vazio quando os insights vêm agregados (modo antigo). */
+  date?: string; // YYYY-MM-DD
 }
 
 interface RawInsightRow {
   campaign_id?: string;
   campaign_name?: string;
   spend?: string;
+  date_start?: string;
 }
 
 interface InsightsResponse {
@@ -41,9 +45,12 @@ interface AdAccountsResponse {
 }
 
 const FIM_VENDA_RE = /\b(fim|fins|venda|vendas)\b/i;
+// Captura tag [LEAD] ou [LEADS] em qualquer posição do nome
+// (ex: "[LEAD] [WHATSAPP] [TJM]", "[CBO] [LEADS] [AGO25]", "🔵[LEAD] ...")
+const LEADS_TAG_RE = /\[\s*leads?\s*\]/i;
 
 export function isFimVenda(campaignName: string): boolean {
-  return FIM_VENDA_RE.test(campaignName);
+  return FIM_VENDA_RE.test(campaignName) || LEADS_TAG_RE.test(campaignName);
 }
 
 function fmtDate(d: Date): string {
@@ -143,7 +150,8 @@ export async function fetchAdAccountsByGestor(
 function buildInsightsUrl(
   acc: MetaAccount,
   adAccountId: string,
-  range: MetaFetchRange
+  range: MetaFetchRange,
+  daily: boolean = false
 ): string {
   const params = new URLSearchParams({
     level: 'campaign',
@@ -151,6 +159,10 @@ function buildInsightsUrl(
     limit: '500',
     access_token: acc.token,
   });
+
+  if (daily) {
+    params.set('time_increment', '1');
+  }
 
   if (range.start && range.end) {
     params.set(
@@ -167,10 +179,11 @@ function buildInsightsUrl(
 async function fetchInsightsForAdAccount(
   acc: MetaAccount,
   adAccount: { id: string; name: string },
-  range: MetaFetchRange
+  range: MetaFetchRange,
+  daily: boolean = false
 ): Promise<CampaignInsight[]> {
   const out: CampaignInsight[] = [];
-  let url: string | null = buildInsightsUrl(acc, adAccount.id, range);
+  let url: string | null = buildInsightsUrl(acc, adAccount.id, range, daily);
 
   for (let i = 0; i < 20 && url; i++) {
     const res = await fetch(url);
@@ -189,6 +202,7 @@ async function fetchInsightsForAdAccount(
         gestor: acc.gestor,
         accountId: adAccount.id,
         accountName: adAccount.name,
+        date: daily ? row.date_start : undefined,
       });
     }
     url = data.paging?.next ?? null;
@@ -228,10 +242,14 @@ export interface FetchInsightsResult {
 /**
  * Busca insights APENAS das contas listadas em `links`. Sem discovery.
  * Usa direto o account_id + gestor do link pra resolver token.
+ *
+ * @param daily se true, traz granularidade diária (time_increment=1) — usado
+ *   para excluir spend de períodos em Manutenção via timeline do Bia Soft.
  */
 export async function fetchInsightsForLinks(
   range: MetaFetchRange,
-  links: LinkForInsights[]
+  links: LinkForInsights[],
+  daily: boolean = false
 ): Promise<FetchInsightsResult> {
   const errors: string[] = [];
   const allInsights: CampaignInsight[] = [];
@@ -261,7 +279,7 @@ export async function fetchInsightsForLinks(
       }));
 
       const results = await mapWithConcurrency(targets, 5, (ad) =>
-        fetchInsightsForAdAccount(acc, ad, range).catch((e) => {
+        fetchInsightsForAdAccount(acc, ad, range, daily).catch((e) => {
           errors.push(errorMessage(e));
           return [] as CampaignInsight[];
         })
