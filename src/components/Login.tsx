@@ -20,8 +20,12 @@ interface CachedAuthEmails {
   cs: [string, string][];
   gestor: [string, string][];
   programador: [string, string][];
+  designer?: [string, string][];
+  photos?: [string, string][];      // email → photoUrl
+  workspace?: [string, string][];   // email → nome (workspace)
 }
-const AUTH_CACHE_KEY = 'auth:emails:v1';
+// v3: adicionados designer + workspace (resolve login via nome do workspace)
+const AUTH_CACHE_KEY = 'auth:emails:v3';
 
 function readCachedEmails(): MondayEmails | null {
   const c = readCache<CachedAuthEmails>(AUTH_CACHE_KEY);
@@ -30,6 +34,9 @@ function readCachedEmails(): MondayEmails | null {
     csByEmail: new Map(c.cs),
     gestorByEmail: new Map(c.gestor),
     programadorByEmail: new Map(c.programador),
+    designerByEmail: new Map(c.designer ?? []),
+    photoByEmail: new Map(c.photos ?? []),
+    workspaceNameByEmail: new Map(c.workspace ?? []),
   };
 }
 
@@ -38,6 +45,9 @@ function saveCachedEmails(em: MondayEmails) {
     cs: Array.from(em.csByEmail.entries()),
     gestor: Array.from(em.gestorByEmail.entries()),
     programador: Array.from(em.programadorByEmail.entries()),
+    designer: em.designerByEmail ? Array.from(em.designerByEmail.entries()) : [],
+    photos: em.photoByEmail ? Array.from(em.photoByEmail.entries()) : [],
+    workspace: em.workspaceNameByEmail ? Array.from(em.workspaceNameByEmail.entries()) : [],
   });
 }
 

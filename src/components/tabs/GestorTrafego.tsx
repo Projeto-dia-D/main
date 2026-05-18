@@ -12,7 +12,11 @@ import { LeadsTable } from '../programacao/LeadsTable';
 import { TransferidosTable } from '../programacao/TransferidosTable';
 import { isClientChurned, nameMatchesScope } from '../../lib/monday';
 import { DoutoresList } from '../gestor/DoutoresList';
-import { useUser, isAdmin } from '../../lib/userContext';
+import { useUser, hasFullAccess } from '../../lib/userContext';
+import { ViewAsTab } from '../ViewAsTab';
+import { useUserPhotos } from '../../hooks/useUserPhotos';
+import { useNotifications } from '../../lib/notificationsContext';
+import { useEffect } from 'react';
 import { assertConfig, assertGestorConfig } from '../../config';
 import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
 import { Modal } from '../Modal';
@@ -22,6 +26,7 @@ import { GestorCard } from '../gestor/GestorCard';
 import { PerfilPessoalGestor } from '../gestor/PerfilPessoalGestor';
 import { ClientesTable } from '../gestor/ClientesTable';
 import { CampanhasTable } from '../gestor/CampanhasTable';
+import { ClienteDrilldown } from '../gestor/ClienteDrilldown';
 import { GestoresTable } from '../gestor/GestoresTable';
 import { VinculacoesModal } from '../gestor/VinculacoesModal';
 import { DiagnosticoOrfaos } from '../gestor/DiagnosticoOrfaos';
@@ -45,6 +50,10 @@ export function GestorTrafego() {
   } | null>(null);
   // View-as (admin): nome do gestor pra simular o perfil pessoal dele.
   const [viewAsGestor, setViewAsGestor] = useState<string | null>(null);
+  // Drill em UM cliente específico
+  const [drillClient, setDrillClient] = useState<{ clientId: string; gestorNome: string } | null>(null);
+  const { lookup: lookupPhoto } = useUserPhotos();
+  const { report: reportNotification, dismiss: dismissNotification } = useNotifications();
 
   const { leads, loading: leadsLoading, error: leadsError } = useLeads();
   const {
@@ -143,7 +152,7 @@ export function GestorTrafego() {
   const user = useUser();
   const summary = useMemo(() => {
     // Admin com view-as: simula perfil pessoal de um gestor específico
-    if (isAdmin(user) && viewAsGestor) {
+    if (hasFullAccess(user) && viewAsGestor) {
       const filteredGestores = fullSummary.gestores.filter((g) => g.gestor === viewAsGestor);
       const totalSpend = filteredGestores.reduce((s, g) => s + g.totalSpend, 0);
       const totalTransferencias = filteredGestores.reduce((s, g) => s + g.totalTransferencias, 0);
@@ -163,7 +172,7 @@ export function GestorTrafego() {
         campaignsOrfas: [],
       };
     }
-    if (isAdmin(user)) return fullSummary;
+    if (hasFullAccess(user)) return fullSummary;
     if (user.role === 'gestor' && user.scope) {
       const filteredGestores = fullSummary.gestores.filter((g) =>
         nameMatchesScope(user.scope!, g.gestor)
@@ -242,15 +251,53 @@ export function GestorTrafego() {
   const showLoadingOverlay =
     (leadsLoading || mondayLoading) && summary.gestores.length === 0;
 
+  // Reporta erros das integrações pro sistema central de notificações.
+  // Cada erro tem ID estável → não duplica, e some quando o erro some.
+  useEffect(() => {
+    if (leadsError) {
+      reportNotification({ id: 'supabase-leads', level: 'error', source: 'Supabase', message: leadsError });
+    } else {
+      dismissNotification('supabase-leads');
+    }
+  }, [leadsError, reportNotification, dismissNotification]);
+
+  useEffect(() => {
+    if (mondayError) {
+      reportNotification({ id: 'monday-clients', level: 'error', source: 'Monday', message: mondayError });
+    } else {
+      dismissNotification('monday-clients');
+    }
+  }, [mondayError, reportNotification, dismissNotification]);
+
+  useEffect(() => {
+    if (linksError) {
+      reportNotification({ id: 'meta-links', level: 'error', source: 'Vínculos', message: linksError });
+    } else {
+      dismissNotification('meta-links');
+    }
+  }, [linksError, reportNotification, dismissNotification]);
+
+  useEffect(() => {
+    // metaErrors é um array — cada erro vira uma notificação com id derivado
+    const idsAtual = new Set<string>();
+    metaErrors.forEach((msg, i) => {
+      const id = `meta-${i}-${msg.slice(0, 40)}`;
+      idsAtual.add(id);
+      reportNotification({ id, level: 'error', source: 'Meta Ads', message: msg });
+    });
+    // Não temos como saber quais sair sem tracking; deixa pro usuário dispensar manualmente
+  }, [metaErrors, reportNotification]);
+
   return (
     <div className="p-6 lg:p-8 flex flex-col gap-6 max-w-[1600px] mx-auto">
-      {/* === Admin view-as: tab bar com nomes dos gestores === */}
-      {isAdmin(user) && fullSummary.gestores.length > 0 && (
+      {/* === Admin view-as: tab bar com fotos dos gestores === */}
+      {hasFullAccess(user) && fullSummary.gestores.length > 0 && (
         <div className="flex items-center gap-1.5 bg-burst-card border border-burst-border rounded-xl p-1.5 w-fit flex-wrap">
           <ViewAsTab
             label="Visão geral"
             active={viewAsGestor === null}
             onClick={() => setViewAsGestor(null)}
+            noAvatar
           />
           {fullSummary.gestores.map((g) => {
             const firstName = g.gestor.split(' ')[0];
@@ -258,6 +305,8 @@ export function GestorTrafego() {
               <ViewAsTab
                 key={g.gestor}
                 label={firstName}
+                fullName={g.gestor}
+                photoUrl={lookupPhoto(g.gestor)}
                 active={viewAsGestor === g.gestor}
                 onClick={() => setViewAsGestor(g.gestor)}
               />
@@ -317,16 +366,7 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
         </div>
       )}
 
-      {(leadsError || mondayError || metaErrors.length > 0 || linksError) && (
-        <div className="rounded-xl border border-red-500/40 bg-red-500/5 p-4 space-y-1 text-sm">
-          {leadsError && <div className="text-red-400">Supabase: {leadsError}</div>}
-          {mondayError && <div className="text-red-400">Monday: {mondayError}</div>}
-          {linksError && <div className="text-red-400">Vínculos: {linksError}</div>}
-          {metaErrors.map((e, i) => (
-            <div key={i} className="text-red-400">{e}</div>
-          ))}
-        </div>
-      )}
+      {/* Erros foram movidos pra aba "Notificações" — visível pelo sininho na sidebar */}
 
       {!linksMissingTable && !leadsLoading && !mondayLoading && links.length === 0 && (
         <div className="rounded-xl border border-burst-orange/40 bg-burst-orange/5 p-5 flex items-start gap-3">
@@ -355,16 +395,20 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
       ) : (
         <>
           {/* === VISÃO PERSONALIZADA: Gestor não-admin OU admin com view-as === */}
-          {((!isAdmin(user) && user.role === 'gestor') || (isAdmin(user) && viewAsGestor)) &&
+          {((!hasFullAccess(user) && user.role === 'gestor') || (hasFullAccess(user) && viewAsGestor)) &&
             summary.gestores.length === 1 && (
               <PerfilPessoalGestor
                 gestor={summary.gestores[0]}
                 sectorSummary={fullSummary}
+                onClickMensagens={() => setDrillGestor({ gestor: summary.gestores[0].gestor, type: 'mensagens' })}
+                onClickTransferencias={() => setDrillGestor({ gestor: summary.gestores[0].gestor, type: 'transferencias' })}
+                onClickSpend={() => setDrillGestor({ gestor: summary.gestores[0].gestor, type: 'spend' })}
+                onClickCliente={(cm) => setDrillClient({ clientId: cm.client.id, gestorNome: summary.gestores[0].gestor })}
               />
             )}
 
           {/* === VISÃO ADMIN COMPLETA === */}
-          {isAdmin(user) && !viewAsGestor && (
+          {hasFullAccess(user) && !viewAsGestor && (
             <>
               <PainelGeralGestor
                 summary={summary}
@@ -377,7 +421,14 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
               {summary.gestores.length > 0 && (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                   {summary.gestores.map((g) => (
-                    <PainelMiniGestor key={g.gestor} gestor={g} />
+                    <PainelMiniGestor
+                      key={g.gestor}
+                      gestor={g}
+                      onClickMensagens={() => setDrillGestor({ gestor: g.gestor, type: 'mensagens' })}
+                      onClickTransferencias={() => setDrillGestor({ gestor: g.gestor, type: 'transferencias' })}
+                      onClickSpend={() => setDrillGestor({ gestor: g.gestor, type: 'spend' })}
+                      onClickCliente={(cm) => setDrillClient({ clientId: cm.client.id, gestorNome: g.gestor })}
+                    />
                   ))}
                 </div>
               )}
@@ -460,7 +511,7 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
           )}
 
           {/* Gestor não-admin sem dados */}
-          {!isAdmin(user) && user.role === 'gestor' && summary.gestores.length === 0 && (
+          {!hasFullAccess(user) && user.role === 'gestor' && summary.gestores.length === 0 && (
             <div className="rounded-2xl border border-burst-warning/40 bg-burst-warning/5 p-8 text-center">
               <AlertTriangle className="text-burst-warning mx-auto mb-3" size={28} />
               <div className="text-white font-display text-xl mb-2">
@@ -474,7 +525,7 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
           )}
 
           {/* Outros papéis */}
-          {!isAdmin(user) && user.role !== 'gestor' && (
+          {!hasFullAccess(user) && user.role !== 'gestor' && (
             <div className="rounded-2xl border border-burst-border bg-burst-card p-8 text-center">
               <p className="text-burst-muted text-sm">
                 Esta aba mostra dados de Gestor de Tráfego. Use a aba do seu setor.
@@ -490,7 +541,20 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
         title="Clientes do Monday"
         subtitle={`${allClientMetrics.length} cliente(s) com Bia (grupo Plano à vista + Normal + Bia Soft)`}
       >
-        <ClientesTable clients={allClientMetrics} />
+        <ClientesTable
+          clients={allClientMetrics}
+          onClickClient={(cm) => {
+            // Acha o gestor do cliente clicado pra abrir o drill
+            const g = summary.gestores.find((gst) =>
+              gst.clients.some((c) => c.client.id === cm.client.id)
+            );
+            setOpenModal(null);
+            setDrillClient({
+              clientId: cm.client.id,
+              gestorNome: g?.gestor ?? '(sem gestor)',
+            });
+          }}
+        />
       </Modal>
 
       <Modal
@@ -591,30 +655,28 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
           </Modal>
         );
       })()}
+
+      {/* Drill-down de UM cliente específico */}
+      {(() => {
+        if (!drillClient) return null;
+        // Procura em todos os gestores + clientsFora pra cobrir clientes
+        // sem gestor (vindos da tabela "Clientes do Monday")
+        const cm =
+          allClientMetrics.find((c) => c.client.id === drillClient.clientId);
+        if (!cm) return null;
+        return (
+          <Modal
+            open
+            onClose={() => setDrillClient(null)}
+            title={cm.client.name}
+            subtitle={`Cliente de ${drillClient.gestorNome}`}
+            maxWidth="max-w-5xl"
+          >
+            <ClienteDrilldown cm={cm} />
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
 
-function ViewAsTab({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={[
-        'px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors',
-        active
-          ? 'bg-burst-orange/20 text-burst-orange-bright shadow-orange-glow-sm'
-          : 'text-burst-muted hover:text-white hover:bg-white/5',
-      ].join(' ')}
-    >
-      {label}
-    </button>
-  );
-}

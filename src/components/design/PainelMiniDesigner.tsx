@@ -7,17 +7,40 @@ import {
 } from '../../lib/designMetrics';
 import type { DesignerMetrics } from '../../lib/designMetrics';
 import { DesignerHeroImage } from './DesignerHeroImage';
+import { Avatar } from '../Avatar';
+import { useUserPhotos } from '../../hooks/useUserPhotos';
 
 interface Props {
   designer: DesignerMetrics;
   onClick?: () => void;
+  onClickFeitas?: () => void;
+  onClickManutencoes?: () => void;
 }
 
-export function PainelMiniDesigner({ designer, onClick }: Props) {
+export function PainelMiniDesigner({
+  designer,
+  onClick,
+  onClickFeitas,
+  onClickManutencoes,
+}: Props) {
   const colorsManut = pctManutColors(designer.pctManutencao);
   const colorsDem = tierColor(designer.tierDemandas);
   // bonusTotal agora é 0 | 0.5 | 1 (Math.min dos tiers) — vence o menor.
   const colorsBonus = tierColor(designer.bonusTotal);
+  const { lookup: lookupPhoto } = useUserPhotos();
+  const photoUrl = lookupPhoto(designer.nome);
+
+  // Helpers de click: stop propagation pra não disparar onClick do card
+  // quando o user clicar dentro de uma estatística.
+  function makeHandler(fn?: () => void) {
+    if (!fn) return undefined;
+    return (e: React.MouseEvent) => {
+      e.stopPropagation();
+      fn();
+    };
+  }
+  const clickFeitas = makeHandler(onClickFeitas);
+  const clickManutencoes = makeHandler(onClickManutencoes);
 
   return (
     <section
@@ -33,51 +56,81 @@ export function PainelMiniDesigner({ designer, onClick }: Props) {
     >
       <div className="absolute -top-16 -right-16 w-40 h-40 rounded-full bg-burst-orange/5 blur-3xl pointer-events-none" />
 
-      {/* Modo herói: banner grande quando bateu 1 salário cheio */}
+      {/* Modo herói: banner cinematográfico (com fogo verde) quando bateu
+          1 salário cheio. Tem precedência sobre o avatar pequeno. */}
       {designer.bonusTotal === 1 && (
         <div className="flex justify-center mb-3 relative">
           <DesignerHeroImage designerNome={designer.nome} size={120} />
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-3 relative gap-2">
-        <div className="min-w-0 flex-1">
-          <div className="text-[10px] uppercase tracking-[0.2em] text-burst-muted">Designer</div>
-          <h3 className="font-display text-2xl text-white tracking-wide truncate flex items-center gap-2">
-            {designer.nome}
-            <Palette size={16} className={colorsBonus.text} />
-          </h3>
+      <div className="flex items-center justify-between mb-3 relative gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          {/* Avatar Monday: só quando NÃO está em modo herói (evita
+              duplicar foto). Clicável → abre lightbox. */}
+          {designer.bonusTotal !== 1 && (
+            <Avatar
+              src={photoUrl}
+              name={designer.nome}
+              size={44}
+              className="ring-2 ring-burst-orange/30"
+              clickable
+            />
+          )}
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-burst-muted">Designer</div>
+            <h3
+              className="font-display text-2xl text-white tracking-wide truncate flex items-center gap-2"
+              title={designer.nome}
+            >
+              {firstName(designer.nome)}
+              <Palette size={16} className={colorsBonus.text} />
+            </h3>
+          </div>
         </div>
         <div
-          className={`px-2 py-1 rounded-md border text-[10px] uppercase tracking-wider font-bold ${colorsBonus.border} ${colorsBonus.bg} ${colorsBonus.text}`}
+          className={`shrink-0 px-2 py-1 rounded-md border text-[10px] uppercase tracking-wider font-bold ${colorsBonus.border} ${colorsBonus.bg} ${colorsBonus.text}`}
         >
           {formatBonusTotal(designer.bonusTotal)}
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2 mb-3 relative">
-        {/* DEMANDAS/DIA */}
-        <div className={`rounded-lg border ${colorsDem.border} ${colorsDem.bg} px-3 py-2`}>
+        {/* DEMANDAS/DIA — clicável: abre lista de Feitas */}
+        <ClickableStat
+          onClick={clickFeitas}
+          title="Ver demandas feitas"
+          className={`border ${colorsDem.border} ${colorsDem.bg}`}
+        >
           <div className="text-[9px] uppercase tracking-wider text-burst-muted flex items-center gap-1">
             <Zap size={10} /> Demandas/dia
           </div>
           <div className={`font-display text-2xl ${colorsDem.text}`}>
             {designer.demandasPorDia.toFixed(1)}
           </div>
-        </div>
-        {/* TAX APROV (% manutenção) */}
-        <div className={`rounded-lg border ${colorsManut.border} ${colorsManut.bg} px-3 py-2`}>
+        </ClickableStat>
+
+        {/* TAX APROV (% manutenção) — clicável: abre lista de Manutenções */}
+        <ClickableStat
+          onClick={clickManutencoes}
+          title="Ver manutenções"
+          className={`border ${colorsManut.border} ${colorsManut.bg}`}
+        >
           <div className="text-[9px] uppercase tracking-wider text-burst-muted flex items-center gap-1">
             <RefreshCw size={10} /> % Manutenção
           </div>
           <div className={`font-display text-2xl ${colorsManut.text}`}>
             {designer.pctManutencao.toFixed(1)}%
           </div>
-        </div>
+        </ClickableStat>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <div className="rounded-lg bg-black/30 border border-burst-border px-2 py-1.5 flex flex-col">
+        <ClickableStat
+          onClick={clickFeitas}
+          title="Ver demandas feitas"
+          className="bg-black/30 border border-burst-border"
+        >
           <div className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-burst-muted">
             <CheckCircle2 size={11} /> Entregas
           </div>
@@ -86,8 +139,12 @@ export function PainelMiniDesigner({ designer, onClick }: Props) {
             className="font-display text-base text-burst-orange-bright"
           />
           <span className="text-[9px] text-burst-muted">{designer.feitasUnicas} únicas</span>
-        </div>
-        <div className="rounded-lg bg-black/30 border border-burst-border px-2 py-1.5 flex flex-col">
+        </ClickableStat>
+        <ClickableStat
+          onClick={clickManutencoes}
+          title="Ver manutenções"
+          className="bg-black/30 border border-burst-border"
+        >
           <div className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-burst-muted">
             <RefreshCw size={11} /> Manutenções
           </div>
@@ -96,7 +153,7 @@ export function PainelMiniDesigner({ designer, onClick }: Props) {
             className="font-display text-base text-white"
           />
           <span className="text-[9px] text-burst-muted">{designer.manutencoesUnicas} únicas</span>
-        </div>
+        </ClickableStat>
       </div>
 
       {designer.atestadosNoPeriodo.length > 0 && (
@@ -111,5 +168,44 @@ export function PainelMiniDesigner({ designer, onClick }: Props) {
         </div>
       )}
     </section>
+  );
+}
+
+function firstName(s: string): string {
+  // "Paulo Henrique Pires Da Silva" → "Paulo Henrique"
+  // Pega os 2 primeiros tokens pra dar mais identidade.
+  const parts = s.trim().split(/\s+/);
+  return parts.slice(0, 2).join(' ') || s;
+}
+
+/** Wrapper que torna um stat clicável (com hover) quando recebe onClick.
+ *  Sem onClick, vira só uma div estática. */
+function ClickableStat({
+  onClick,
+  title,
+  className,
+  children,
+}: {
+  onClick?: (e: React.MouseEvent) => void;
+  title?: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  if (!onClick) {
+    return (
+      <div className={`rounded-lg px-3 py-2 flex flex-col ${className ?? ''}`}>
+        {children}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={`rounded-lg px-3 py-2 flex flex-col text-left cursor-pointer transition-all hover:brightness-110 hover:-translate-y-[1px] focus:outline-none focus:ring-1 focus:ring-burst-orange/60 ${className ?? ''}`}
+    >
+      {children}
+    </button>
   );
 }

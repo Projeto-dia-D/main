@@ -1,7 +1,9 @@
-import { Code2, Palette, Headphones, Megaphone, CalendarDays, ChevronLeft, ChevronRight, type LucideIcon } from 'lucide-react';
+import { Code2, Palette, Headphones, Megaphone, CalendarDays, Bell, ChevronLeft, ChevronRight, type LucideIcon } from 'lucide-react';
 import { BrandTitle } from './BrandTitle';
+import { useUser, hasFullAccess } from '../lib/userContext';
+import { useNotifications } from '../lib/notificationsContext';
 
-export type TabKey = 'programacao' | 'design' | 'cs' | 'gestor' | 'calendario';
+export type TabKey = 'programacao' | 'design' | 'cs' | 'gestor' | 'calendario' | 'notificacoes';
 
 interface Props {
   active: TabKey;
@@ -16,9 +18,32 @@ const ITEMS: { key: TabKey; label: string; icon: LucideIcon }[] = [
   { key: 'cs', label: 'CS', icon: Headphones },
   { key: 'gestor', label: 'Gestor de Tráfego', icon: Megaphone },
   { key: 'calendario', label: 'Calendário', icon: CalendarDays },
+  { key: 'notificacoes', label: 'Notificações', icon: Bell },
 ];
 
+/**
+ * Quais tabs cada papel pode ver. Admin vê tudo. CS e Gestor NÃO veem Design
+ * nem Notificações. Programador vê tudo (programadores ajudam no design).
+ *
+ * "Notificações" é só pra hasFullAccess (admin + super programador).
+ */
+function visibleTabsForRole(role: string | null | undefined): Set<TabKey> {
+  if (role === 'cs') return new Set(['programacao', 'cs', 'calendario']);
+  if (role === 'gestor') return new Set(['programacao', 'gestor', 'calendario']);
+  if (role === 'designer') return new Set(['design', 'calendario']);
+  // programador comum (sem viewAll): vê o que faz sentido pra ele
+  return new Set(['programacao', 'design', 'cs', 'gestor', 'calendario']);
+}
+
 export function Sidebar({ active, onChange, collapsed, onToggleCollapsed }: Props) {
+  const user = useUser();
+  const { notifications } = useNotifications();
+  const notifCount = notifications.length;
+  // Admin/super programador: tudo + notificações. Outros: tabs limitados.
+  const visible = hasFullAccess(user)
+    ? new Set<TabKey>(['programacao', 'design', 'cs', 'gestor', 'calendario', 'notificacoes'])
+    : visibleTabsForRole(user.role);
+  const items = ITEMS.filter((it) => visible.has(it.key));
   return (
     <aside
       className={[
@@ -46,30 +71,43 @@ export function Sidebar({ active, onChange, collapsed, onToggleCollapsed }: Prop
       </div>
 
       <nav className={['flex flex-col py-4 gap-1', collapsed ? 'px-2' : 'px-3'].join(' ')}>
-        {ITEMS.map((it) => {
+        {items.map((it) => {
           const Icon = it.icon;
           const isActive = active === it.key;
+          const showBadge = it.key === 'notificacoes' && notifCount > 0;
           return (
             <button
               key={it.key}
               onClick={() => onChange(it.key)}
               title={collapsed ? it.label : undefined}
               className={[
-                'group flex items-center gap-3 rounded-lg text-sm font-medium transition-all',
+                'group flex items-center gap-3 rounded-lg text-sm font-medium transition-all relative',
                 collapsed ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5',
                 isActive
                   ? 'bg-burst-orange/15 text-burst-orange-bright shadow-orange-glow-sm'
                   : 'text-burst-muted hover:bg-white/5 hover:text-white',
               ].join(' ')}
             >
-              <Icon
-                size={18}
-                className={
-                  isActive ? 'text-burst-orange-bright' : 'text-burst-muted group-hover:text-white'
-                }
-              />
+              <div className="relative">
+                <Icon
+                  size={18}
+                  className={
+                    isActive ? 'text-burst-orange-bright' : 'text-burst-muted group-hover:text-white'
+                  }
+                />
+                {showBadge && collapsed && (
+                  <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center px-1">
+                    {notifCount > 9 ? '9+' : notifCount}
+                  </span>
+                )}
+              </div>
               {!collapsed && <span>{it.label}</span>}
-              {!collapsed && isActive && (
+              {!collapsed && showBadge && (
+                <span className="ml-auto min-w-[18px] h-[18px] rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-1.5">
+                  {notifCount > 99 ? '99+' : notifCount}
+                </span>
+              )}
+              {!collapsed && isActive && !showBadge && (
                 <span className="ml-auto w-1.5 h-1.5 rounded-full bg-burst-orange animate-pulse" />
               )}
             </button>

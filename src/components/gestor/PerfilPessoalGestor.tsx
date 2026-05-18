@@ -21,21 +21,36 @@ import {
   type GestorSummary,
 } from '../../lib/gestorMetrics';
 import { AnimatedNumber } from '../AnimatedNumber';
+import { Avatar } from '../Avatar';
+import { useUserPhotos } from '../../hooks/useUserPhotos';
 
 interface Props {
   gestor: GestorMetrics;
   // sectorSummary = média de todos gestores (não filtrado por role) — usado pra
   // comparar a performance pessoal com a média do setor.
   sectorSummary: GestorSummary;
+  onClickCliente?: (cm: ClientMetrics) => void;
+  onClickMensagens?: () => void;
+  onClickTransferencias?: () => void;
+  onClickSpend?: () => void;
 }
 
 /**
  * Dashboard PERSONALIZADO de um gestor de tráfego. Estrutura idêntica a
  * PerfilPessoalCs, mas usando os tipos de gestor.
  */
-export function PerfilPessoalGestor({ gestor, sectorSummary }: Props) {
+export function PerfilPessoalGestor({
+  gestor,
+  sectorSummary,
+  onClickCliente,
+  onClickMensagens,
+  onClickTransferencias,
+  onClickSpend,
+}: Props) {
   const colors = tierColorCpt(gestor.tier);
   const prog = progressToNextTierCpt(gestor.cpt);
+  const { lookup: lookupPhoto } = useUserPhotos();
+  const photoUrl = lookupPhoto(gestor.gestor);
 
   const sectorCpt = sectorSummary.cptGeral;
   const cptDelta = useMemo(() => {
@@ -93,18 +108,21 @@ export function PerfilPessoalGestor({ gestor, sectorSummary }: Props) {
         <div className="absolute -bottom-24 -left-24 w-64 h-64 rounded-full bg-burst-orange/5 blur-3xl pointer-events-none" />
 
         <div className="relative flex items-start justify-between gap-4 flex-wrap">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <Sparkles size={14} className="text-burst-orange-bright" />
-              <span className="text-[10px] uppercase tracking-[0.3em] text-burst-muted">
-                Seu painel
-              </span>
-            </div>
-            <h2 className="font-display text-4xl text-white tracking-wide truncate">
-              {gestor.gestor}
-            </h2>
-            <div className="text-xs text-burst-muted mt-1">
-              {gestor.clients.length} cliente(s) sob sua gestão
+          <div className="flex items-center gap-4 min-w-0">
+            <Avatar src={photoUrl} name={gestor.gestor} size={64} className="ring-2 ring-burst-orange/30" clickable />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <Sparkles size={14} className="text-burst-orange-bright" />
+                <span className="text-[10px] uppercase tracking-[0.3em] text-burst-muted">
+                  Seu painel
+                </span>
+              </div>
+              <h2 className="font-display text-4xl text-white tracking-wide truncate">
+                {gestor.gestor}
+              </h2>
+              <div className="text-xs text-burst-muted mt-1">
+                {gestor.clients.length} cliente(s) sob sua gestão
+              </div>
             </div>
           </div>
           <div className="flex flex-col items-end gap-2">
@@ -181,18 +199,21 @@ export function PerfilPessoalGestor({ gestor, sectorSummary }: Props) {
             label="Mensagens"
             value={gestor.totalMensagens}
             tone="white"
+            onClick={onClickMensagens}
           />
           <BigStat
             icon={<ArrowDownRight size={14} />}
             label="Transferências"
             value={gestor.totalTransferencias}
             tone="orange"
+            onClick={onClickTransferencias}
           />
           <BigStatText
             icon={<DollarSign size={14} />}
             label="Investido"
             value={brl(gestor.totalSpend)}
             tone="white"
+            onClick={onClickSpend}
           />
           <BigStatText
             icon={<BarChart3 size={14} />}
@@ -203,6 +224,7 @@ export function PerfilPessoalGestor({ gestor, sectorSummary }: Props) {
                 : '—'
             }
             tone="orange"
+            onClick={onClickTransferencias}
           />
         </div>
       </section>
@@ -215,6 +237,7 @@ export function PerfilPessoalGestor({ gestor, sectorSummary }: Props) {
           tone="success"
           clients={melhores}
           emptyMsg="Nenhum cliente com transferências no período."
+          onClickCliente={onClickCliente}
         />
         <ClientesPanel
           title="Piores clientes"
@@ -223,6 +246,7 @@ export function PerfilPessoalGestor({ gestor, sectorSummary }: Props) {
           tone="danger"
           clients={piores}
           emptyMsg="Todos seus clientes estão convertendo bem 🎉"
+          onClickCliente={onClickCliente}
         />
       </div>
     </div>
@@ -230,80 +254,72 @@ export function PerfilPessoalGestor({ gestor, sectorSummary }: Props) {
 }
 
 function BigStat({
-  icon,
-  label,
-  value,
-  tone,
+  icon, label, value, tone, onClick,
 }: {
-  icon: React.ReactNode;
-  label: string;
-  value: number;
-  tone: 'orange' | 'white';
+  icon: React.ReactNode; label: string; value: number; tone: 'orange' | 'white'; onClick?: () => void;
 }) {
-  return (
-    <div className="rounded-xl bg-black/30 border border-burst-border px-4 py-3">
+  const cls = 'rounded-xl bg-black/30 border border-burst-border px-4 py-3 text-left';
+  const inner = (
+    <>
       <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-burst-muted mb-1">
         {icon} {label}
       </div>
       <AnimatedNumber
         value={value}
-        className={`font-display text-2xl ${
-          tone === 'orange' ? 'text-burst-orange-bright' : 'text-white'
-        }`}
+        className={`font-display text-2xl ${tone === 'orange' ? 'text-burst-orange-bright' : 'text-white'}`}
       />
-    </div>
+    </>
+  );
+  if (!onClick) return <div className={cls}>{inner}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${cls} cursor-pointer transition-all hover:bg-black/50 hover:border-burst-orange/60 hover:-translate-y-[1px] focus:outline-none focus:ring-1 focus:ring-burst-orange/40`}
+    >
+      {inner}
+    </button>
   );
 }
 
 function BigStatText({
-  icon,
-  label,
-  value,
-  tone,
+  icon, label, value, tone, onClick,
 }: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  tone: 'orange' | 'white';
+  icon: React.ReactNode; label: string; value: string; tone: 'orange' | 'white'; onClick?: () => void;
 }) {
-  return (
-    <div className="rounded-xl bg-black/30 border border-burst-border px-4 py-3">
+  const cls = 'rounded-xl bg-black/30 border border-burst-border px-4 py-3 text-left';
+  const inner = (
+    <>
       <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-burst-muted mb-1">
         {icon} {label}
       </div>
-      <span
-        className={`font-display text-2xl ${
-          tone === 'orange' ? 'text-burst-orange-bright' : 'text-white'
-        }`}
-      >
+      <span className={`font-display text-2xl ${tone === 'orange' ? 'text-burst-orange-bright' : 'text-white'}`}>
         {value}
       </span>
-    </div>
+    </>
+  );
+  if (!onClick) return <div className={cls}>{inner}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${cls} cursor-pointer transition-all hover:bg-black/50 hover:border-burst-orange/60 hover:-translate-y-[1px] focus:outline-none focus:ring-1 focus:ring-burst-orange/40`}
+    >
+      {inner}
+    </button>
   );
 }
 
 function ClientesPanel({
-  title,
-  subtitle,
-  icon,
-  tone,
-  clients,
-  emptyMsg,
+  title, subtitle, icon, tone, clients, emptyMsg, onClickCliente,
 }: {
-  title: string;
-  subtitle: string;
-  icon: React.ReactNode;
-  tone: 'success' | 'danger';
-  clients: ClientMetrics[];
-  emptyMsg: string;
+  title: string; subtitle: string; icon: React.ReactNode;
+  tone: 'success' | 'danger'; clients: ClientMetrics[]; emptyMsg: string;
+  onClickCliente?: (cm: ClientMetrics) => void;
 }) {
-  const borderCls =
-    tone === 'success' ? 'border-green-500/40' : 'border-red-500/40';
-
+  const borderCls = tone === 'success' ? 'border-green-500/40' : 'border-red-500/40';
   return (
-    <section
-      className={`rounded-2xl bg-burst-card border ${borderCls} p-5 animate-slide-up`}
-    >
+    <section className={`rounded-2xl bg-burst-card border ${borderCls} p-5 animate-slide-up`}>
       <div className="flex items-start gap-3 mb-4">
         {icon}
         <div className="min-w-0">
@@ -311,13 +327,18 @@ function ClientesPanel({
           <p className="text-xs text-burst-muted mt-0.5">{subtitle}</p>
         </div>
       </div>
-
       {clients.length === 0 ? (
         <div className="text-burst-muted text-sm py-4 text-center">{emptyMsg}</div>
       ) : (
         <ul className="flex flex-col gap-2">
           {clients.map((c, idx) => (
-            <ClienteRow key={c.client.id} cm={c} rank={idx + 1} tone={tone} />
+            <ClienteRow
+              key={c.client.id}
+              cm={c}
+              rank={idx + 1}
+              tone={tone}
+              onClick={onClickCliente ? () => onClickCliente(c) : undefined}
+            />
           ))}
         </ul>
       )}
@@ -326,45 +347,49 @@ function ClientesPanel({
 }
 
 function ClienteRow({
-  cm,
-  rank,
-  tone,
+  cm, rank, tone, onClick,
 }: {
-  cm: ClientMetrics;
-  rank: number;
-  tone: 'success' | 'danger';
+  cm: ClientMetrics; rank: number; tone: 'success' | 'danger'; onClick?: () => void;
 }) {
   const rankBg =
     tone === 'success'
       ? 'bg-green-500/15 text-green-400 border-green-500/30'
       : 'bg-red-500/15 text-red-400 border-red-500/30';
 
-  return (
-    <li className="flex items-center gap-3 rounded-lg bg-black/30 border border-burst-border px-3 py-2.5 hover:bg-black/40 transition-colors">
-      <span
-        className={`flex items-center justify-center w-6 h-6 rounded-md text-xs font-bold border ${rankBg}`}
-      >
+  const cls = 'flex items-center gap-3 rounded-lg bg-black/30 border border-burst-border px-3 py-2.5 transition-colors w-full';
+  const inner = (
+    <>
+      <span className={`flex items-center justify-center w-6 h-6 rounded-md text-xs font-bold border ${rankBg}`}>
         {rank}
       </span>
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 text-left">
         <div className="text-sm text-white truncate font-medium">{cm.client.name}</div>
         <div className="text-[11px] text-burst-muted">
           {cm.transferencias} transf. • {cm.mensagensIniciadas} msg • {brl(cm.spend)}
         </div>
       </div>
       <div className="text-right shrink-0">
-        <div
-          className={[
-            'font-display text-lg',
-            tone === 'success' ? 'text-green-400' : 'text-red-400',
-          ].join(' ')}
-        >
+        <div className={['font-display text-lg', tone === 'success' ? 'text-green-400' : 'text-red-400'].join(' ')}>
           {cm.cpt === null ? '—' : brl(cm.cpt)}
         </div>
-        <div className="text-[10px] uppercase tracking-wider text-burst-muted">
-          CPT
-        </div>
+        <div className="text-[10px] uppercase tracking-wider text-burst-muted">CPT</div>
       </div>
-    </li>
+    </>
   );
+
+  if (onClick) {
+    return (
+      <li>
+        <button
+          type="button"
+          onClick={onClick}
+          title={`Ver detalhes de ${cm.client.name}`}
+          className={`${cls} cursor-pointer hover:bg-black/50 hover:border-burst-orange/60 focus:outline-none focus:ring-1 focus:ring-burst-orange/40`}
+        >
+          {inner}
+        </button>
+      </li>
+    );
+  }
+  return <li className={`${cls} hover:bg-black/40`}>{inner}</li>;
 }

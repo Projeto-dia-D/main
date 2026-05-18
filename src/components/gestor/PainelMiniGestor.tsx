@@ -1,4 +1,5 @@
-import { TrendingDown, DollarSign, ArrowDownRight, MessageCircle } from 'lucide-react';
+import { useMemo } from 'react';
+import { TrendingDown, DollarSign, ArrowDownRight, MessageCircle, Trophy, AlertTriangle } from 'lucide-react';
 import { AnimatedNumber } from '../AnimatedNumber';
 import {
   tierColorCpt,
@@ -6,15 +7,31 @@ import {
   progressToNextTierCpt,
   brl,
   type GestorMetrics,
+  type ClientMetrics,
 } from '../../lib/gestorMetrics';
+import { Avatar } from '../Avatar';
+import { useUserPhotos } from '../../hooks/useUserPhotos';
 
 interface Props {
   gestor: GestorMetrics;
+  onClickMensagens?: () => void;
+  onClickTransferencias?: () => void;
+  onClickSpend?: () => void;
+  onClickCliente?: (cm: ClientMetrics) => void;
 }
 
-export function PainelMiniGestor({ gestor }: Props) {
+export function PainelMiniGestor({
+  gestor,
+  onClickMensagens,
+  onClickTransferencias,
+  onClickSpend,
+  onClickCliente,
+}: Props) {
   const colors = tierColorCpt(gestor.tier);
   const prog = progressToNextTierCpt(gestor.cpt);
+  const { lookup: lookupPhoto } = useUserPhotos();
+  const photoUrl = lookupPhoto(gestor.gestor);
+  const { melhores, piores } = useMemo(() => rankClients(gestor.clients), [gestor.clients]);
 
   return (
     <section
@@ -27,14 +44,17 @@ export function PainelMiniGestor({ gestor }: Props) {
       <div className="absolute -top-16 -right-16 w-40 h-40 rounded-full bg-burst-orange/5 blur-3xl pointer-events-none" />
 
       <div className="flex items-center justify-between mb-3 relative">
-        <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-[0.2em] text-burst-muted">
-            Gestor
+        <div className="flex items-center gap-3 min-w-0">
+          <Avatar src={photoUrl} name={gestor.gestor} size={44} className="ring-2 ring-burst-orange/30" clickable />
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-burst-muted">
+              Gestor
+            </div>
+            <h3 className="font-display text-2xl text-white tracking-wide truncate flex items-center gap-2">
+              {firstName(gestor.gestor)}
+              <TrendingDown size={16} className={colors.text} />
+            </h3>
           </div>
-          <h3 className="font-display text-2xl text-white tracking-wide truncate flex items-center gap-2">
-            {gestor.gestor}
-            <TrendingDown size={16} className={colors.text} />
-          </h3>
         </div>
         <div className={`px-2 py-1 rounded-md border text-[10px] uppercase tracking-wider font-bold ${colors.border} ${colors.bg} ${colors.text}`}>
           {tierLabelCpt(gestor.tier)}
@@ -71,12 +91,106 @@ export function PainelMiniGestor({ gestor }: Props) {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-2">
-        <MiniStat icon={<DollarSign size={11} />} label="Investido" value={brl(gestor.totalSpend)} accent />
-        <MiniStatNum icon={<ArrowDownRight size={11} />} label="Transf." value={gestor.totalTransferencias} accent />
-        <MiniStatNum icon={<MessageCircle size={11} />} label="Mensagens" value={gestor.totalMensagens} />
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        <MiniStat icon={<DollarSign size={11} />} label="Investido" value={brl(gestor.totalSpend)} accent onClick={onClickSpend} />
+        <MiniStatNum icon={<ArrowDownRight size={11} />} label="Transf." value={gestor.totalTransferencias} accent onClick={onClickTransferencias} />
+        <MiniStatNum icon={<MessageCircle size={11} />} label="Mensagens" value={gestor.totalMensagens} onClick={onClickMensagens} />
       </div>
+
+      {(melhores.length > 0 || piores.length > 0) && (
+        <div className="grid grid-cols-2 gap-2">
+          <ClientesMiniList title="Melhores" icon={<Trophy size={10} className="text-green-400" />} clients={melhores} tone="success" onClickCliente={onClickCliente} />
+          <ClientesMiniList title="Piores" icon={<AlertTriangle size={10} className="text-red-400" />} clients={piores} tone="danger" onClickCliente={onClickCliente} />
+        </div>
+      )}
     </section>
+  );
+}
+
+/** Rankeia clientes: melhores = mais transferências; piores = gastaram mas com 0 transf ou CPT alto. */
+function rankClients(clients: ClientMetrics[]): {
+  melhores: ClientMetrics[];
+  piores: ClientMetrics[];
+} {
+  const ativos = clients.filter((c) => !c.inactive);
+
+  const melhores = [...ativos]
+    .filter((c) => c.transferencias > 0)
+    .sort((a, b) => {
+      if (b.transferencias !== a.transferencias) return b.transferencias - a.transferencias;
+      return (a.cpt ?? Infinity) - (b.cpt ?? Infinity);
+    })
+    .slice(0, 3);
+
+  const piores = [...ativos]
+    .filter((c) => c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 170))
+    .sort((a, b) => {
+      const aBad = a.transferencias === 0;
+      const bBad = b.transferencias === 0;
+      if (aBad !== bBad) return aBad ? -1 : 1;
+      return (b.cpt ?? 0) - (a.cpt ?? 0);
+    })
+    .slice(0, 3);
+
+  return { melhores, piores };
+}
+
+function ClientesMiniList({
+  title,
+  icon,
+  clients,
+  tone,
+  onClickCliente,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  clients: ClientMetrics[];
+  tone: 'success' | 'danger';
+  onClickCliente?: (cm: ClientMetrics) => void;
+}) {
+  const borderCls = tone === 'success' ? 'border-green-500/30' : 'border-red-500/30';
+  const textCls = tone === 'success' ? 'text-green-400' : 'text-red-400';
+  return (
+    <div className={`rounded-lg bg-black/30 border ${borderCls} px-2.5 py-2`}>
+      <div className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-burst-muted mb-1.5">
+        {icon} {title}
+      </div>
+      {clients.length === 0 ? (
+        <div className="text-[10px] text-burst-muted py-1">—</div>
+      ) : (
+        <ul className="flex flex-col gap-0.5">
+          {clients.map((c) => {
+            const inner = (
+              <>
+                <span className="truncate text-white/90 flex-1 text-left">{c.client.name}</span>
+                <span className={`font-mono font-semibold ${textCls}`}>
+                  {c.cpt === null ? '—' : brl(c.cpt)}
+                </span>
+              </>
+            );
+            if (!onClickCliente) {
+              return (
+                <li key={c.client.id} className="flex items-center justify-between gap-1 text-[10px]">
+                  {inner}
+                </li>
+              );
+            }
+            return (
+              <li key={c.client.id}>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onClickCliente(c); }}
+                  title={`Ver detalhes de ${c.client.name}`}
+                  className="w-full flex items-center justify-between gap-1 text-[10px] px-1 py-0.5 rounded hover:bg-white/5 transition-colors focus:outline-none focus:ring-1 focus:ring-burst-orange/40"
+                >
+                  {inner}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -85,23 +199,34 @@ function MiniStat({
   label,
   value,
   accent,
+  onClick,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   accent?: boolean;
+  onClick?: () => void;
 }) {
-  return (
-    <div className="rounded-lg bg-black/30 border border-burst-border px-2 py-1.5 flex flex-col">
+  const cls = 'rounded-lg bg-black/30 border border-burst-border px-2 py-1.5 flex flex-col text-left';
+  const inner = (
+    <>
       <div className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-burst-muted">
         {icon} {label}
       </div>
-      <span
-        className={`font-display text-base truncate ${accent ? 'text-burst-orange-bright' : 'text-white'}`}
-      >
+      <span className={`font-display text-base truncate ${accent ? 'text-burst-orange-bright' : 'text-white'}`}>
         {value}
       </span>
-    </div>
+    </>
+  );
+  if (!onClick) return <div className={cls}>{inner}</div>;
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className={`${cls} cursor-pointer transition-all hover:bg-black/50 hover:border-burst-orange/60 hover:-translate-y-[1px] focus:outline-none focus:ring-1 focus:ring-burst-orange/40`}
+    >
+      {inner}
+    </button>
   );
 }
 
@@ -110,14 +235,17 @@ function MiniStatNum({
   label,
   value,
   accent,
+  onClick,
 }: {
   icon: React.ReactNode;
   label: string;
   value: number;
   accent?: boolean;
+  onClick?: () => void;
 }) {
-  return (
-    <div className="rounded-lg bg-black/30 border border-burst-border px-2 py-1.5 flex flex-col">
+  const cls = 'rounded-lg bg-black/30 border border-burst-border px-2 py-1.5 flex flex-col text-left';
+  const inner = (
+    <>
       <div className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-burst-muted">
         {icon} {label}
       </div>
@@ -125,6 +253,20 @@ function MiniStatNum({
         value={value}
         className={`font-display text-base ${accent ? 'text-burst-orange-bright' : 'text-white'}`}
       />
-    </div>
+    </>
   );
+  if (!onClick) return <div className={cls}>{inner}</div>;
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className={`${cls} cursor-pointer transition-all hover:bg-black/50 hover:border-burst-orange/60 hover:-translate-y-[1px] focus:outline-none focus:ring-1 focus:ring-burst-orange/40`}
+    >
+      {inner}
+    </button>
+  );
+}
+
+function firstName(s: string): string {
+  return s.trim().split(/\s+/)[0] ?? s;
 }

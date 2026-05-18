@@ -857,6 +857,126 @@ export interface AuthEmailsResult {
   csByEmail: Map<string, string>;
   gestorByEmail: Map<string, string>;
   programadorByEmail: Map<string, string>;
+  /** Designer → nome. Construído cruzando Central de Design + workspace. */
+  designerByEmail: Map<string, string>;
+  /** Foto de perfil do Monday por email (lowercased). Vazio se o user não
+   *  tem conta no workspace ou se a query falhou. */
+  photoByEmail: Map<string, string>;
+  /** Map<nomeNormalizado, photoUrl> — útil pra quando só temos o nome
+   *  (ex: card de perfil pessoal mostrando outro user). */
+  photoByName: Map<string, string>;
+  /** Map<primeiroNomeLowercase, photoUrl> — fallback quando só sabemos
+   *  o primeiro nome (ex: tab "RICARDO" → matcha Ricardo Paes Fronza). */
+  photoByFirstName: Map<string, string>;
+  /** workspace Monday: email lowercase → nome completo do user.
+   *  Usado pra resolver login quando o email do Bia Soft está desatualizado
+   *  (ex: app espera "ricardofronza@" mas Monday tem "ricardo@"). */
+  workspaceNameByEmail: Map<string, string>;
+}
+
+
+export interface UserPhotosResult {
+  byEmail: Map<string, string>;
+  /** name.toLowerCase().trim() → photoUrl. */
+  byName: Map<string, string>;
+  /** first-name.toLowerCase() → photoUrl. Fallback útil quando o app só
+   *  tem o primeiro nome (ex: "RICARDO" → "ricardo paes fronza"). */
+  byFirstName: Map<string, string>;
+  /** workspace Monday: email lowercased → nome completo. Usado pra
+   *  resolver login quando a coluna do board tem email desatualizado. */
+  workspaceNameByEmail: Map<string, string>;
+}
+
+const CENTRAL_DESIGN_BOARD_ID = '3519879202';
+const DESIGN_PERSON_COL_ID = 'person'; // "Designer Responsável"
+
+/**
+ * Busca designers únicos do board "Central de Design", cruzando com os users
+ * do workspace pra resolver email. Retorna Map<email, nome>.
+ */
+export async function fetchDesigners(
+  workspaceNameByEmail: Map<string, string>
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (!config.MONDAY_TOKEN) return map;
+
+  // Inverte workspace: nome lowercase → email
+  const emailByName = new Map<string, string>();
+  for (const [email, name] of workspaceNameByEmail) {
+    emailByName.set(name.trim().toLowerCase(), email);
+  }
+
+  interface DesignResp {
+    data?: { boards?: Array<{ items_page: { items: Array<{ column_values: Array<{ id: string; text: string | null }> }> } }> };
+    errors?: Array<{ message: string }>;
+    error_message?: string;
+  }
+
+  try {
+    const res = await gql<DesignResp>(
+      `query ($boardId: ID!) {
+        boards(ids: [$boardId]) {
+          items_page(limit: 500) {
+            items { column_values(ids: ["${DESIGN_PERSON_COL_ID}"]) { id text } }
+          }
+        }
+      }`,
+      { boardId: CENTRAL_DESIGN_BOARD_ID }
+    );
+
+    const seen = new Set<string>();
+    for (const it of res.data?.boards?.[0]?.items_page?.items ?? []) {
+      const txt = it.column_values?.[0]?.text?.trim();
+      if (!txt) continue;
+      // Pode ter múltiplos (separados por vírgula). Pega cada nome.
+      for (const nome of txt.split(/\s*,\s*/)) {
+        const key = nome.trim().toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        const email = emailByName.get(key);
+        if (email) map.set(email, nome.trim());
+      }
+    }
+  } catch (e) {
+    console.warn('[Monday] falha ao buscar designers:', e);
+  }
+  return map;
+}
+
+/** Busca fotos + nomes dos users do Monday workspace. */
+export async function fetchUserPhotos(): Promise<UserPhotosResult> {
+  const byEmail = new Map<string, string>();
+  const byName = new Map<string, string>();
+  const byFirstName = new Map<string, string>();
+  const workspaceNameByEmail = new Map<string, string>();
+  if (!config.MONDAY_TOKEN) return { byEmail, byName, byFirstName, workspaceNameByEmail };
+  interface UsersResp {
+    data?: { users?: Array<{ email: string | null; name: string | null; photo_thumb: string | null }> };
+    errors?: Array<{ message: string }>;
+    error_message?: string;
+  }
+  try {
+    const res = await gql<UsersResp>(
+      `query { users(limit: 500) { name email photo_thumb } }`,
+      {}
+    );
+    for (const u of res.data?.users ?? []) {
+      if (u.email && u.name) {
+        workspaceNameByEmail.set(u.email.toLowerCase().trim(), u.name);
+      }
+      if (!u.photo_thumb) continue;
+      if (u.email) byEmail.set(u.email.toLowerCase().trim(), u.photo_thumb);
+      if (u.name) {
+        const full = u.name.trim().toLowerCase();
+        if (full) byName.set(full, u.photo_thumb);
+        const first = full.split(/\s+/)[0];
+        if (first && !byFirstName.has(first)) byFirstName.set(first, u.photo_thumb);
+      }
+    }
+  } catch (e) {
+    console.warn('[Monday] falha ao buscar fotos de users:', e);
+  }
+  return { byEmail, byName, byFirstName, workspaceNameByEmail };
 }
 
 const AUTH_EMAILS_QUERY = `
@@ -902,10 +1022,21 @@ export async function fetchAuthEmails(): Promise<AuthEmailsResult> {
   const csByEmail = new Map<string, string>();
   const gestorByEmail = new Map<string, string>();
   const programadorByEmail = new Map<string, string>();
+  let designerByEmail = new Map<string, string>();
+  let photoByEmail = new Map<string, string>();
+  let photoByName = new Map<string, string>();
+  let photoByFirstName = new Map<string, string>();
+  let workspaceNameByEmail = new Map<string, string>();
 
-  if (!config.MONDAY_TOKEN) {
-    return { csByEmail, gestorByEmail, programadorByEmail };
-  }
+  const emptyResult = (): AuthEmailsResult => ({
+    csByEmail, gestorByEmail, programadorByEmail, designerByEmail,
+    photoByEmail, photoByName, photoByFirstName, workspaceNameByEmail,
+  });
+
+  if (!config.MONDAY_TOKEN) return emptyResult();
+
+  // Dispara busca de fotos em paralelo (não bloqueia o login se falhar)
+  const photosPromise = fetchUserPhotos();
 
   function getValue(cv: { text?: string | null; display_value?: string | null } | undefined) {
     return cv?.text?.trim() || cv?.display_value?.trim() || null;
@@ -960,7 +1091,27 @@ export async function fetchAuthEmails(): Promise<AuthEmailsResult> {
     console.warn('[Monday] falha ao buscar emails de auth:', e);
   }
 
-  return { csByEmail, gestorByEmail, programadorByEmail };
+  try {
+    const photos = await photosPromise;
+    photoByEmail = photos.byEmail;
+    photoByName = photos.byName;
+    photoByFirstName = photos.byFirstName;
+    workspaceNameByEmail = photos.workspaceNameByEmail;
+  } catch {
+    /* já logou warn dentro da função */
+  }
+
+  // Designers: query separada, mas precisa do workspaceNameByEmail (já vindo)
+  try {
+    designerByEmail = await fetchDesigners(workspaceNameByEmail);
+  } catch {
+    /* já logou warn */
+  }
+
+  return {
+    csByEmail, gestorByEmail, programadorByEmail, designerByEmail,
+    photoByEmail, photoByName, photoByFirstName, workspaceNameByEmail,
+  };
 }
 
 /**

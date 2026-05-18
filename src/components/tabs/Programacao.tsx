@@ -23,7 +23,9 @@ import { DoutoresTable } from '../programacao/DoutoresTable';
 import { PerfilPessoalProgramador } from '../programacao/PerfilPessoalProgramador';
 import { Modal } from '../Modal';
 import { Users, AlertTriangle, PhoneOff, FileWarning, ListChecks } from 'lucide-react';
-import { useUser, isAdmin } from '../../lib/userContext';
+import { useUser, hasFullAccess } from '../../lib/userContext';
+import { ViewAsTab } from '../ViewAsTab';
+import { useUserPhotos } from '../../hooks/useUserPhotos';
 import { nameMatchesScope } from '../../lib/monday';
 
 type ModalKind = 'leads' | 'transferidos' | 'doutores' | 'interrompidos' | 'incompletos' | null;
@@ -41,12 +43,15 @@ export function Programacao() {
   const [openModal, setOpenModal] = useState<ModalKind>(null);
   // null = mostra todos; senão filtra leads por responsável (Gabriel/Eduardo)
   const [responsavelFiltro, setResponsavelFiltro] = useState<string | null>(null);
+  // Drill-down em UM doutor a partir do PerfilPessoalProgramador
+  const [drillDoutor, setDrillDoutor] = useState<string | null>(null);
+  const { lookup: lookupPhoto } = useUserPhotos();
 
   // === FILTRO POR ROLE ===
   const user = useUser();
   // Programador não-admin: filtro é FIXO no scope dele (não pode trocar).
   const enforcedResponsavel = useMemo<string | null>(() => {
-    if (isAdmin(user)) return null; // admin escolhe via tabs
+    if (hasFullAccess(user)) return null; // admin escolhe via tabs
     if (user.role === 'programador' && user.scope) {
       // Procura o responsável real que casa com o scope (Bia Soft usa nome
       // completo; user.scope também é o completo).
@@ -143,19 +148,22 @@ export function Programacao() {
     <div className="p-6 lg:p-8 flex flex-col gap-6 max-w-[1600px] mx-auto">
       {/* Tabs de responsável: só admin pode trocar. Programador vê os
           próprios dados fixados (sem opção de troca). */}
-      {isAdmin(user) && responsaveis.length > 0 && (
-        <div className="flex items-center gap-1.5 bg-burst-card border border-burst-border rounded-xl p-1.5 w-fit">
-          <ResponsavelTab
+      {hasFullAccess(user) && responsaveis.length > 0 && (
+        <div className="flex items-center gap-1.5 bg-burst-card border border-burst-border rounded-xl p-1.5 w-fit flex-wrap">
+          <ViewAsTab
             label="Todos"
             active={responsavelFiltro === null}
             onClick={() => setResponsavelFiltro(null)}
+            noAvatar
           />
           {responsaveis.map((r) => {
             const firstName = r.split(' ')[0];
             return (
-              <ResponsavelTab
+              <ViewAsTab
                 key={r}
                 label={firstName}
+                fullName={r}
+                photoUrl={lookupPhoto(r)}
                 active={responsavelFiltro === r}
                 onClick={() => setResponsavelFiltro(r)}
               />
@@ -163,7 +171,7 @@ export function Programacao() {
           })}
         </div>
       )}
-      {!isAdmin(user) && enforcedResponsavel && (
+      {!hasFullAccess(user) && enforcedResponsavel && (
         <div className="text-xs text-burst-muted bg-burst-card border border-burst-border rounded-xl px-4 py-2 w-fit">
           Filtrado em <span className="text-white font-semibold">{enforcedResponsavel}</span>
         </div>
@@ -204,8 +212,8 @@ export function Programacao() {
       </div>
 
       {/* === VISÃO PERSONALIZADA: Programador não-admin OU admin com responsável selecionado === */}
-      {((!isAdmin(user) && user.role === 'programador' && enforcedResponsavel) ||
-        (isAdmin(user) && responsavelFiltro)) && (
+      {((!hasFullAccess(user) && user.role === 'programador' && enforcedResponsavel) ||
+        (hasFullAccess(user) && responsavelFiltro)) && (
         <>
           <PerfilPessoalProgramador
             nomeProgramador={
@@ -213,6 +221,10 @@ export function Programacao() {
             }
             summary={summary}
             fullSummary={fullSummary}
+            onClickLeads={() => setOpenModal('leads')}
+            onClickTransferidos={() => setOpenModal('transferidos')}
+            onClickDoutores={() => setOpenModal('doutores')}
+            onClickDoutor={(d) => setDrillDoutor(d.nome)}
           />
           {summary.doutores.length === 0 && (
             <div className="rounded-2xl border border-burst-warning/40 bg-burst-warning/5 p-8 text-center">
@@ -232,7 +244,7 @@ export function Programacao() {
       )}
 
       {/* === VISÃO ADMIN COMPLETA: só quando "Todos" está selecionado === */}
-      {isAdmin(user) && !responsavelFiltro && (
+      {hasFullAccess(user) && !responsavelFiltro && (
         <>
           <PainelGeral
             summary={summary}
@@ -269,7 +281,7 @@ export function Programacao() {
       )}
 
       {/* Outros papéis (cs, gestor) — não veem a Programação detalhada */}
-      {!isAdmin(user) && user.role !== 'programador' && (
+      {!hasFullAccess(user) && user.role !== 'programador' && (
         <div className="rounded-2xl border border-burst-border bg-burst-card p-8 text-center">
           <p className="text-burst-muted text-sm">
             Esta aba mostra dados de Programação. Use a aba do seu setor.
@@ -301,7 +313,13 @@ export function Programacao() {
         title="Doutores ativos"
         subtitle={`${summary.doutores.length} doutores no período`}
       >
-        <DoutoresTable doutores={summary.doutores} />
+        <DoutoresTable
+          doutores={summary.doutores}
+          onClickDoutor={(d) => {
+            setOpenModal(null);
+            setDrillDoutor(d.nome);
+          }}
+        />
       </Modal>
 
       <Modal
@@ -321,31 +339,24 @@ export function Programacao() {
       >
         <LeadsTable leads={summary.chatsIncompletos} />
       </Modal>
-    </div>
-  );
-}
 
-function ResponsavelTab({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={[
-        'px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors',
-        active
-          ? 'bg-burst-orange/20 text-burst-orange-bright shadow-orange-glow-sm'
-          : 'text-burst-muted hover:text-white hover:bg-white/5',
-      ].join(' ')}
-    >
-      {label}
-    </button>
+      {/* Drill-down em UM doutor (a partir do PerfilPessoalProgramador) */}
+      {(() => {
+        if (!drillDoutor) return null;
+        const d = summary.doutores.find((x) => x.nome === drillDoutor);
+        if (!d) return null;
+        return (
+          <Modal
+            open
+            onClose={() => setDrillDoutor(null)}
+            title={d.nome}
+            subtitle={`${d.totalLeads} lead(s) • ${d.totalTransferidos} transferido(s) • taxa ${d.taxa.toFixed(1)}%`}
+          >
+            <LeadsTable leads={d.leads} />
+          </Modal>
+        );
+      })()}
+    </div>
   );
 }
 

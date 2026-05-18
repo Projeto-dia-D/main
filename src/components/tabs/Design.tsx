@@ -116,7 +116,12 @@ export function Design() {
       {summary.designers.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {summary.designers.map((d) => (
-            <PainelMiniDesigner key={d.nome} designer={d} />
+            <PainelMiniDesigner
+              key={d.nome}
+              designer={d}
+              onClickFeitas={() => setDrill({ designer: d.nome, type: 'feitas' })}
+              onClickManutencoes={() => setDrill({ designer: d.nome, type: 'manutencoes' })}
+            />
           ))}
         </div>
       )}

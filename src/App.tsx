@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { LogOut, UserCircle2 } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { Sidebar, type TabKey } from './components/Sidebar';
+import { Avatar } from './components/Avatar';
 import { Login } from './components/Login';
 import { Programacao } from './components/tabs/Programacao';
 import { GestorTrafego } from './components/tabs/GestorTrafego';
@@ -10,6 +11,9 @@ import { Calendario } from './components/tabs/Calendario';
 import { useMondayClients } from './hooks/useMondayClients';
 import { readCurrentUser, writeCurrentUser, type AuthUser } from './lib/auth';
 import { UserContext } from './lib/userContext';
+import { PhotoLightboxProvider } from './components/PhotoLightboxContext';
+import { NotificationsProvider } from './lib/notificationsContext';
+import { Notificacoes } from './components/tabs/Notificacoes';
 
 const TAB_TITLES: Record<TabKey, string> = {
   programacao: 'Programação',
@@ -17,6 +21,7 @@ const TAB_TITLES: Record<TabKey, string> = {
   cs: 'CS',
   gestor: 'Gestor de Tráfego',
   calendario: 'Calendário',
+  notificacoes: 'Notificações',
 };
 
 const ROLE_LABEL = {
@@ -24,6 +29,7 @@ const ROLE_LABEL = {
   cs: 'CS',
   gestor: 'Gestor',
   programador: 'Programador',
+  designer: 'Designer',
 } as const;
 
 export default function App() {
@@ -83,6 +89,9 @@ export default function App() {
     ? ROLE_LABEL[user.role as keyof typeof ROLE_LABEL] ?? user.role
     : '';
 
+  // CS e Gestor NÃO podem acessar Design. Admin, Programador e Designer podem.
+  const canAccessDesign = user.role !== 'cs' && user.role !== 'gestor';
+
   function handleLogout() {
     writeCurrentUser(null);
     setUser(null);
@@ -90,6 +99,8 @@ export default function App() {
 
   return (
     <UserContext.Provider value={user}>
+      <NotificationsProvider>
+      <PhotoLightboxProvider>
       <div className="flex min-h-screen">
         <Sidebar
           active={active}
@@ -106,8 +117,13 @@ export default function App() {
               <span className="w-2 h-2 rounded-full bg-burst-orange animate-pulse" />
               <span>Realtime ativo</span>
               <div className="h-5 w-px bg-burst-border" />
-              <div className="flex items-center gap-2">
-                <UserCircle2 size={16} className="text-burst-orange-bright" />
+              <div className="flex items-center gap-2.5">
+                <Avatar
+                  src={user.photoUrl}
+                  name={user.displayName ?? user.email}
+                  size={32}
+                  clickable
+                />
                 <div className="flex flex-col">
                   <span className="text-white text-xs font-semibold leading-none">
                     {user.displayName ?? user.email}
@@ -129,13 +145,16 @@ export default function App() {
           </header>
           <div className="flex-1 overflow-y-auto scrollbar-thin">
             {active === 'programacao' && <Programacao />}
-            {active === 'design' && <Design />}
+            {active === 'design' && canAccessDesign && <Design />}
             {active === 'cs' && <CS />}
             {active === 'gestor' && <GestorTrafego />}
             {active === 'calendario' && <Calendario />}
+            {active === 'notificacoes' && <Notificacoes />}
           </div>
         </main>
       </div>
+      </PhotoLightboxProvider>
+      </NotificationsProvider>
     </UserContext.Provider>
   );
 }

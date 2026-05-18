@@ -5,6 +5,7 @@ import { tierColor } from '../../lib/metrics';
 
 interface Props {
   doutores: DoutorMetrics[];
+  onClickDoutor?: (d: DoutorMetrics) => void;
 }
 
 function fmt(iso: string | null): string {
@@ -33,7 +34,7 @@ function statusBadge(d: DoutorMetrics) {
   };
 }
 
-export function DoutoresTable({ doutores }: Props) {
+export function DoutoresTable({ doutores, onClickDoutor }: Props) {
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
@@ -75,7 +76,17 @@ export function DoutoresTable({ doutores }: Props) {
               const colors = tierColor(d.tier);
               const badge = statusBadge(d);
               return (
-                <tr key={d.nome} className="border-t border-burst-border hover:bg-white/[0.02]">
+                <tr
+                  key={d.nome}
+                  onClick={onClickDoutor ? () => onClickDoutor(d) : undefined}
+                  className={[
+                    'border-t border-burst-border transition-colors',
+                    onClickDoutor
+                      ? 'cursor-pointer hover:bg-burst-orange/[0.05]'
+                      : 'hover:bg-white/[0.02]',
+                  ].join(' ')}
+                  title={onClickDoutor ? `Ver leads de ${d.nome}` : undefined}
+                >
                   <td className="px-3 py-2">
                     <span
                       className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${badge.cls}`}

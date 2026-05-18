@@ -17,6 +17,8 @@ import {
 } from '../../lib/metrics';
 import type { MetricsSummary, DoutorMetrics } from '../../lib/types';
 import { AnimatedNumber } from '../AnimatedNumber';
+import { Avatar } from '../Avatar';
+import { useUserPhotos } from '../../hooks/useUserPhotos';
 
 interface Props {
   /** Nome do programador (scope do user). */
@@ -25,6 +27,10 @@ interface Props {
   summary: MetricsSummary;
   /** Summary COMPLETO (todos doutores) — pra calcular ranking entre programadores. */
   fullSummary: MetricsSummary;
+  onClickLeads?: () => void;
+  onClickTransferidos?: () => void;
+  onClickDoutores?: () => void;
+  onClickDoutor?: (d: DoutorMetrics) => void;
 }
 
 /**
@@ -43,9 +49,15 @@ export function PerfilPessoalProgramador({
   nomeProgramador,
   summary,
   fullSummary,
+  onClickLeads,
+  onClickTransferidos,
+  onClickDoutores,
+  onClickDoutor,
 }: Props) {
   const colors = tierColor(summary.tier);
   const prog = progressToNextTier(summary.taxaGeral);
+  const { lookup: lookupPhoto } = useUserPhotos();
+  const photoUrl = lookupPhoto(nomeProgramador);
 
   // Comparação: minha taxa vs taxa geral da agência
   const sectorTaxa = fullSummary.taxaGeral;
@@ -82,18 +94,21 @@ export function PerfilPessoalProgramador({
         <div className="absolute -bottom-24 -left-24 w-64 h-64 rounded-full bg-burst-orange/5 blur-3xl pointer-events-none" />
 
         <div className="relative flex items-start justify-between gap-4 flex-wrap">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 mb-1">
-              <Sparkles size={14} className="text-burst-orange-bright" />
-              <span className="text-[10px] uppercase tracking-[0.3em] text-burst-muted">
-                Seu painel
-              </span>
-            </div>
-            <h2 className="font-display text-4xl text-white tracking-wide truncate">
-              {nomeProgramador}
-            </h2>
-            <div className="text-xs text-burst-muted mt-1">
-              {summary.doutores.length} doutor(es) sob sua programação
+          <div className="flex items-center gap-4 min-w-0">
+            <Avatar src={photoUrl} name={nomeProgramador} size={64} className="ring-2 ring-burst-orange/30" clickable />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <Sparkles size={14} className="text-burst-orange-bright" />
+                <span className="text-[10px] uppercase tracking-[0.3em] text-burst-muted">
+                  Seu painel
+                </span>
+              </div>
+              <h2 className="font-display text-4xl text-white tracking-wide truncate">
+                {nomeProgramador}
+              </h2>
+              <div className="text-xs text-burst-muted mt-1">
+                {summary.doutores.length} doutor(es) sob sua programação
+              </div>
             </div>
           </div>
           <div className="flex flex-col items-end gap-2">
@@ -165,18 +180,21 @@ export function PerfilPessoalProgramador({
             label="Leads cadastrados"
             value={summary.totalLeads}
             tone="white"
+            onClick={onClickLeads}
           />
           <BigStat
             icon={<CheckCircle2 size={14} />}
             label="Transferidos"
             value={summary.totalTransferidos}
             tone="orange"
+            onClick={onClickTransferidos}
           />
           <BigStat
             icon={<Activity size={14} />}
             label="Doutores ativos"
             value={summary.doutores.length}
             tone="white"
+            onClick={onClickDoutores}
           />
         </div>
       </section>
@@ -190,6 +208,7 @@ export function PerfilPessoalProgramador({
           tone="success"
           doutores={melhores}
           emptyMsg="Ainda sem doutor com volume suficiente para ranqueamento."
+          onClickDoutor={onClickDoutor}
         />
         <DoutoresPanel
           title="Doutores em alerta"
@@ -198,6 +217,7 @@ export function PerfilPessoalProgramador({
           tone="danger"
           doutores={piores}
           emptyMsg="Todos seus doutores estão acima de 16% 🎉"
+          onClickDoutor={onClickDoutor}
         />
       </div>
     </div>
@@ -205,53 +225,44 @@ export function PerfilPessoalProgramador({
 }
 
 function BigStat({
-  icon,
-  label,
-  value,
-  tone,
+  icon, label, value, tone, onClick,
 }: {
-  icon: React.ReactNode;
-  label: string;
-  value: number;
-  tone: 'orange' | 'white';
+  icon: React.ReactNode; label: string; value: number; tone: 'orange' | 'white'; onClick?: () => void;
 }) {
-  return (
-    <div className="rounded-xl bg-black/30 border border-burst-border px-4 py-3">
+  const cls = 'rounded-xl bg-black/30 border border-burst-border px-4 py-3 text-left';
+  const inner = (
+    <>
       <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-burst-muted mb-1">
         {icon} {label}
       </div>
       <AnimatedNumber
         value={value}
-        className={`font-display text-2xl ${
-          tone === 'orange' ? 'text-burst-orange-bright' : 'text-white'
-        }`}
+        className={`font-display text-2xl ${tone === 'orange' ? 'text-burst-orange-bright' : 'text-white'}`}
       />
-    </div>
+    </>
+  );
+  if (!onClick) return <div className={cls}>{inner}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${cls} cursor-pointer transition-all hover:bg-black/50 hover:border-burst-orange/60 hover:-translate-y-[1px] focus:outline-none focus:ring-1 focus:ring-burst-orange/40`}
+    >
+      {inner}
+    </button>
   );
 }
 
 function DoutoresPanel({
-  title,
-  subtitle,
-  icon,
-  tone,
-  doutores,
-  emptyMsg,
+  title, subtitle, icon, tone, doutores, emptyMsg, onClickDoutor,
 }: {
-  title: string;
-  subtitle: string;
-  icon: React.ReactNode;
-  tone: 'success' | 'danger';
-  doutores: DoutorMetrics[];
-  emptyMsg: string;
+  title: string; subtitle: string; icon: React.ReactNode;
+  tone: 'success' | 'danger'; doutores: DoutorMetrics[]; emptyMsg: string;
+  onClickDoutor?: (d: DoutorMetrics) => void;
 }) {
-  const borderCls =
-    tone === 'success' ? 'border-green-500/40' : 'border-red-500/40';
-
+  const borderCls = tone === 'success' ? 'border-green-500/40' : 'border-red-500/40';
   return (
-    <section
-      className={`rounded-2xl bg-burst-card border ${borderCls} p-5 animate-slide-up`}
-    >
+    <section className={`rounded-2xl bg-burst-card border ${borderCls} p-5 animate-slide-up`}>
       <div className="flex items-start gap-3 mb-4">
         {icon}
         <div className="min-w-0">
@@ -259,13 +270,18 @@ function DoutoresPanel({
           <p className="text-xs text-burst-muted mt-0.5">{subtitle}</p>
         </div>
       </div>
-
       {doutores.length === 0 ? (
         <div className="text-burst-muted text-sm py-4 text-center">{emptyMsg}</div>
       ) : (
         <ul className="flex flex-col gap-2">
           {doutores.map((d, idx) => (
-            <DoutorRow key={d.nome} d={d} rank={idx + 1} tone={tone} />
+            <DoutorRow
+              key={d.nome}
+              d={d}
+              rank={idx + 1}
+              tone={tone}
+              onClick={onClickDoutor ? () => onClickDoutor(d) : undefined}
+            />
           ))}
         </ul>
       )}
@@ -274,27 +290,21 @@ function DoutoresPanel({
 }
 
 function DoutorRow({
-  d,
-  rank,
-  tone,
+  d, rank, tone, onClick,
 }: {
-  d: DoutorMetrics;
-  rank: number;
-  tone: 'success' | 'danger';
+  d: DoutorMetrics; rank: number; tone: 'success' | 'danger'; onClick?: () => void;
 }) {
   const rankBg =
     tone === 'success'
       ? 'bg-green-500/15 text-green-400 border-green-500/30'
       : 'bg-red-500/15 text-red-400 border-red-500/30';
-
-  return (
-    <li className="flex items-center gap-3 rounded-lg bg-black/30 border border-burst-border px-3 py-2.5 hover:bg-black/40 transition-colors">
-      <span
-        className={`flex items-center justify-center w-6 h-6 rounded-md text-xs font-bold border ${rankBg}`}
-      >
+  const cls = 'flex items-center gap-3 rounded-lg bg-black/30 border border-burst-border px-3 py-2.5 transition-colors w-full';
+  const inner = (
+    <>
+      <span className={`flex items-center justify-center w-6 h-6 rounded-md text-xs font-bold border ${rankBg}`}>
         {rank}
       </span>
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 text-left">
         <div className="text-sm text-white truncate font-medium">{d.nome}</div>
         <div className="text-[11px] text-burst-muted flex items-center gap-2">
           <span>{d.totalLeads} leads</span>
@@ -312,18 +322,26 @@ function DoutorRow({
         </div>
       </div>
       <div className="text-right shrink-0">
-        <div
-          className={[
-            'font-display text-lg',
-            tone === 'success' ? 'text-green-400' : 'text-red-400',
-          ].join(' ')}
-        >
+        <div className={['font-display text-lg', tone === 'success' ? 'text-green-400' : 'text-red-400'].join(' ')}>
           {d.taxa.toFixed(1)}%
         </div>
-        <div className="text-[10px] uppercase tracking-wider text-burst-muted">
-          taxa
-        </div>
+        <div className="text-[10px] uppercase tracking-wider text-burst-muted">taxa</div>
       </div>
-    </li>
+    </>
   );
+  if (onClick) {
+    return (
+      <li>
+        <button
+          type="button"
+          onClick={onClick}
+          title={`Ver leads de ${d.nome}`}
+          className={`${cls} cursor-pointer hover:bg-black/50 hover:border-burst-orange/60 focus:outline-none focus:ring-1 focus:ring-burst-orange/40`}
+        >
+          {inner}
+        </button>
+      </li>
+    );
+  }
+  return <li className={`${cls} hover:bg-black/40`}>{inner}</li>;
 }

@@ -18,10 +18,15 @@ import { PerfilPessoalCs } from '../cs/PerfilPessoalCs';
 import { ClientesTable } from '../gestor/ClientesTable';
 import { DoutoresList } from '../gestor/DoutoresList';
 import { CampanhasTable } from '../gestor/CampanhasTable';
+import { ClienteDrilldown } from '../gestor/ClienteDrilldown';
 import { LeadsTable } from '../programacao/LeadsTable';
 import { TransferidosTable } from '../programacao/TransferidosTable';
 import { isClientChurned, nameMatchesScope } from '../../lib/monday';
-import { useUser, isAdmin } from '../../lib/userContext';
+import { useUser, hasFullAccess } from '../../lib/userContext';
+import { ViewAsTab } from '../ViewAsTab';
+import { useUserPhotos } from '../../hooks/useUserPhotos';
+import { useNotifications } from '../../lib/notificationsContext';
+import { useEffect } from 'react';
 
 type ModalKind = 'clientes' | 'cses' | null;
 
@@ -39,9 +44,13 @@ export function CS() {
     cs: string;
     type: 'mensagens' | 'transferencias' | 'spend';
   } | null>(null);
+  // Drill em um cliente específico (vindo de melhores/piores nos cards mini)
+  const [drillClient, setDrillClient] = useState<{ clientId: string; csNome: string } | null>(null);
   // View-as (admin): nome do CS pra simular o perfil pessoal dele.
   // null = visão completa (default do admin).
   const [viewAsCs, setViewAsCs] = useState<string | null>(null);
+  const { lookup: lookupPhoto } = useUserPhotos();
+  const { report: reportNotification, dismiss: dismissNotification } = useNotifications();
 
   const { leads, loading: leadsLoading, error: leadsError } = useLeads();
   const {
@@ -127,7 +136,7 @@ export function CS() {
   const user = useUser();
   const summary = useMemo(() => {
     // Admin com view-as: simula perfil pessoal de um CS específico
-    if (isAdmin(user) && viewAsCs) {
+    if (hasFullAccess(user) && viewAsCs) {
       const filteredCses = fullSummary.cses.filter((c) => c.cs === viewAsCs);
       const totalSpend = filteredCses.reduce((s, c) => s + c.totalSpend, 0);
       const totalTransferencias = filteredCses.reduce((s, c) => s + c.totalTransferencias, 0);
@@ -145,7 +154,7 @@ export function CS() {
         clientesSemCs: [],
       };
     }
-    if (isAdmin(user)) return fullSummary;
+    if (hasFullAccess(user)) return fullSummary;
     if (user.role === 'cs' && user.scope) {
       const filteredCses = fullSummary.cses.filter((c) =>
         nameMatchesScope(user.scope!, c.cs)
@@ -192,15 +201,35 @@ export function CS() {
 
   const showLoadingOverlay = (leadsLoading || mondayLoading) && summary.cses.length === 0;
 
+  // Reporta erros pro centro de notificações
+  useEffect(() => {
+    if (leadsError) reportNotification({ id: 'cs-supabase', level: 'error', source: 'Supabase', message: leadsError });
+    else dismissNotification('cs-supabase');
+  }, [leadsError, reportNotification, dismissNotification]);
+  useEffect(() => {
+    if (mondayError) reportNotification({ id: 'cs-monday', level: 'error', source: 'Monday', message: mondayError });
+    else dismissNotification('cs-monday');
+  }, [mondayError, reportNotification, dismissNotification]);
+  useEffect(() => {
+    if (linksError) reportNotification({ id: 'cs-links', level: 'error', source: 'Vínculos', message: linksError });
+    else dismissNotification('cs-links');
+  }, [linksError, reportNotification, dismissNotification]);
+  useEffect(() => {
+    metaErrors.forEach((msg, i) => {
+      reportNotification({ id: `cs-meta-${i}-${msg.slice(0,40)}`, level: 'error', source: 'Meta Ads', message: msg });
+    });
+  }, [metaErrors, reportNotification]);
+
   return (
     <div className="p-6 lg:p-8 flex flex-col gap-6 max-w-[1600px] mx-auto">
-      {/* === Admin view-as: tab bar com nomes dos CSs === */}
-      {isAdmin(user) && fullSummary.cses.length > 0 && (
+      {/* === Admin view-as: tab bar com fotos dos CSs === */}
+      {hasFullAccess(user) && fullSummary.cses.length > 0 && (
         <div className="flex items-center gap-1.5 bg-burst-card border border-burst-border rounded-xl p-1.5 w-fit flex-wrap">
           <ViewAsTab
             label="Visão geral"
             active={viewAsCs === null}
             onClick={() => setViewAsCs(null)}
+            noAvatar
           />
           {fullSummary.cses.map((c) => {
             const firstName = c.cs.split(' ')[0];
@@ -208,6 +237,8 @@ export function CS() {
               <ViewAsTab
                 key={c.cs}
                 label={firstName}
+                fullName={c.cs}
+                photoUrl={lookupPhoto(c.cs)}
                 active={viewAsCs === c.cs}
                 onClick={() => setViewAsCs(c.cs)}
               />
@@ -237,16 +268,7 @@ export function CS() {
         </div>
       )}
 
-      {(leadsError || mondayError || metaErrors.length > 0 || linksError) && (
-        <div className="rounded-xl border border-red-500/40 bg-red-500/5 p-4 space-y-1 text-sm">
-          {leadsError && <div className="text-red-400">Supabase: {leadsError}</div>}
-          {mondayError && <div className="text-red-400">Monday: {mondayError}</div>}
-          {linksError && <div className="text-red-400">Vínculos: {linksError}</div>}
-          {metaErrors.map((e, i) => (
-            <div key={i} className="text-red-400">{e}</div>
-          ))}
-        </div>
-      )}
+      {/* Erros foram movidos pra aba "Notificações" — visível pelo sininho na sidebar */}
 
       {!linksMissingTable && links.length === 0 && (
         <div className="rounded-xl border border-burst-orange/40 bg-burst-orange/5 p-5 flex items-start gap-3">
@@ -272,13 +294,20 @@ export function CS() {
       ) : (
         <>
           {/* === VISÃO PERSONALIZADA: CS não-admin OU admin com view-as === */}
-          {((!isAdmin(user) && user.role === 'cs') || (isAdmin(user) && viewAsCs)) &&
+          {((!hasFullAccess(user) && user.role === 'cs') || (hasFullAccess(user) && viewAsCs)) &&
             summary.cses.length === 1 && (
-              <PerfilPessoalCs cs={summary.cses[0]} sectorSummary={fullSummary} />
+              <PerfilPessoalCs
+                cs={summary.cses[0]}
+                sectorSummary={fullSummary}
+                onClickMensagens={() => setDrillCs({ cs: summary.cses[0].cs, type: 'mensagens' })}
+                onClickTransferencias={() => setDrillCs({ cs: summary.cses[0].cs, type: 'transferencias' })}
+                onClickSpend={() => setDrillCs({ cs: summary.cses[0].cs, type: 'spend' })}
+                onClickCliente={(cm) => setDrillClient({ clientId: cm.client.id, csNome: summary.cses[0].cs })}
+              />
             )}
 
           {/* === VISÃO ADMIN COMPLETA: painel geral + multi-grid + análise por CS === */}
-          {isAdmin(user) && !viewAsCs && (
+          {hasFullAccess(user) && !viewAsCs && (
             <>
               <PainelGeralCs
                 summary={summary}
@@ -290,7 +319,14 @@ export function CS() {
               {summary.cses.length > 0 && (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                   {summary.cses.map((c) => (
-                    <PainelMiniCs key={c.cs} cs={c} />
+                    <PainelMiniCs
+                      key={c.cs}
+                      cs={c}
+                      onClickMensagens={() => setDrillCs({ cs: c.cs, type: 'mensagens' })}
+                      onClickTransferencias={() => setDrillCs({ cs: c.cs, type: 'transferencias' })}
+                      onClickSpend={() => setDrillCs({ cs: c.cs, type: 'spend' })}
+                      onClickCliente={(cm) => setDrillClient({ clientId: cm.client.id, csNome: c.cs })}
+                    />
                   ))}
                 </div>
               )}
@@ -341,7 +377,7 @@ export function CS() {
           )}
 
           {/* CS não-admin sem dados: mensagem clara */}
-          {!isAdmin(user) && user.role === 'cs' && summary.cses.length === 0 && (
+          {!hasFullAccess(user) && user.role === 'cs' && summary.cses.length === 0 && (
             <div className="rounded-2xl border border-burst-warning/40 bg-burst-warning/5 p-8 text-center">
               <AlertTriangle className="text-burst-warning mx-auto mb-3" size={28} />
               <div className="text-white font-display text-xl mb-2">
@@ -356,7 +392,7 @@ export function CS() {
           )}
 
           {/* Outros papéis (gestor, programador) — esconde tudo */}
-          {!isAdmin(user) && user.role !== 'cs' && (
+          {!hasFullAccess(user) && user.role !== 'cs' && (
             <div className="rounded-2xl border border-burst-border bg-burst-card p-8 text-center">
               <p className="text-burst-muted text-sm">
                 Esta aba mostra dados de CS. Use a aba do seu setor.
@@ -374,6 +410,16 @@ export function CS() {
       >
         <ClientesTable
           clients={summary.cses.flatMap((c) => c.clients).concat(summary.clientesSemCs)}
+          onClickClient={(cm) => {
+            const csOwner = summary.cses.find((cs) =>
+              cs.clients.some((c) => c.client.id === cm.client.id)
+            );
+            setOpenModal(null);
+            setDrillClient({
+              clientId: cm.client.id,
+              csNome: csOwner?.cs ?? '(sem CS)',
+            });
+          }}
         />
       </Modal>
 
@@ -447,30 +493,27 @@ export function CS() {
           </Modal>
         );
       })()}
+
+      {/* Drill-down de UM cliente específico (vindo de melhores/piores nos cards) */}
+      {(() => {
+        if (!drillClient) return null;
+        // Procura em todos os clientes (CS + sem CS)
+        const all = summary.cses.flatMap((c) => c.clients).concat(summary.clientesSemCs);
+        const cm = all.find((c) => c.client.id === drillClient.clientId);
+        if (!cm) return null;
+        return (
+          <Modal
+            open
+            onClose={() => setDrillClient(null)}
+            title={cm.client.name}
+            subtitle={`Cliente de ${drillClient.csNome}`}
+            maxWidth="max-w-5xl"
+          >
+            <ClienteDrilldown cm={cm} />
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
 
-function ViewAsTab({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={[
-        'px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors',
-        active
-          ? 'bg-burst-orange/20 text-burst-orange-bright shadow-orange-glow-sm'
-          : 'text-burst-muted hover:text-white hover:bg-white/5',
-      ].join(' ')}
-    >
-      {label}
-    </button>
-  );
-}

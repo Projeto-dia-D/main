@@ -5,9 +5,10 @@ import { brl, tierColorCpt, tierForCpt } from '../../lib/gestorMetrics';
 
 interface Props {
   clients: ClientMetrics[];
+  onClickClient?: (cm: ClientMetrics) => void;
 }
 
-export function ClientesTable({ clients }: Props) {
+export function ClientesTable({ clients, onClickClient }: Props) {
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
@@ -59,11 +60,19 @@ export function ClientesTable({ clients }: Props) {
               return (
                 <tr
                   key={cm.client.id}
+                  onClick={onClickClient ? () => onClickClient(cm) : undefined}
                   className={[
-                    'border-t border-burst-border hover:bg-white/[0.02]',
+                    'border-t border-burst-border transition-colors',
+                    onClickClient ? 'cursor-pointer hover:bg-burst-orange/[0.05]' : 'hover:bg-white/[0.02]',
                     cm.inactive ? 'opacity-60' : '',
                   ].join(' ')}
-                  title={cm.inactive ? 'Sem Bia ativa — não conta no total do gestor/CS' : undefined}
+                  title={
+                    onClickClient
+                      ? `Ver detalhes de ${cm.client.name}`
+                      : cm.inactive
+                      ? 'Sem Bia ativa — não conta no total do gestor/CS'
+                      : undefined
+                  }
                 >
                   <td className="px-3 py-2 text-white font-semibold">
                     <div className="flex items-center gap-1.5 flex-wrap">

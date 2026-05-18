@@ -28,3 +28,9 @@ export function isGestor(u: AuthUser): boolean {
 export function isProgramador(u: AuthUser): boolean {
   return u.role === 'programador';
 }
+
+/** Tem acesso total à plataforma (sem filtro por scope).
+ *  Inclui admins E super programadores (Gabriel/Eduardo). */
+export function hasFullAccess(u: AuthUser): boolean {
+  return u.role === 'admin' || u.viewAll === true;
+}
