@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import {
   fetchMondayClients,
   fetchBiaSoftData,
+  fetchBiaFaseTimeline,
   isClientNoBiaSoftById,
   type MondayClient,
+  type FaseTransition,
 } from '../lib/monday';
 import { readCacheWithMeta, writeCache } from '../lib/cache';
 
@@ -21,6 +23,11 @@ export interface UseMondayClientsResult {
   /** Map<nome do cliente normalizado → responsável>. Usado em Programação que
    *  só tem acesso ao nome do doutor (não ao monday_client_id). */
   responsavelByName: Map<string, string>;
+  /** Map<monday_client_id (do Monday principal) → timeline de transições de Fase>.
+   *  Usado pra ajustar spend nos períodos em que a Bia esteve em Manutenção. */
+  biaTimelineByClientId: Map<string, FaseTransition[]>;
+  /** Map<monday_client_id, fase_atual> — fase atual da Bia no board Bia Soft. */
+  biaFaseByClientId: Map<string, string>;
   /** Lista única de responsáveis (Gabriel, Eduardo) com pelo menos 1 ativo. */
   responsaveis: string[];
   loading: boolean;
@@ -30,8 +37,9 @@ export interface UseMondayClientsResult {
 
 const REFRESH_MS = 1000 * 60 * 10; // 10 min
 const CACHE_KEY_CLIENTS = 'monday:clients:v2';
-// v9: adicionado responsavelByClient (por nome) para Programacao
-const CACHE_KEY_BIA = 'monday:biaData:v9';
+// v10: adicionado biaTimelineByClientId (transições de Fase pra excluir Manutenção)
+const CACHE_KEY_BIA = 'monday:biaData:v10';
+const CACHE_KEY_TIMELINE = 'monday:biaTimeline:v1';
 
 interface CachedClients {
   clients: MondayClient[];
@@ -45,9 +53,16 @@ interface CachedBia {
   responsaveis: string[];
 }
 
+interface CachedTimeline {
+  // Mapeia bia_item_id → transições (mas precisamos do monday_client_id)
+  // Salvamos por monday_principal_client_id → transitions[]
+  timeline: [string, FaseTransition[]][];
+}
+
 export function useMondayClients(): UseMondayClientsResult {
   const cachedClients = readCacheWithMeta<CachedClients>(CACHE_KEY_CLIENTS);
   const cachedBia = readCacheWithMeta<CachedBia>(CACHE_KEY_BIA);
+  const cachedTimeline = readCacheWithMeta<CachedTimeline>(CACHE_KEY_TIMELINE);
 
   const initialAllIds = new Set<string>(cachedBia?.value.allIds ?? []);
   const initialActiveIds = new Set<string>(cachedBia?.value.activeIds ?? []);
@@ -62,6 +77,9 @@ export function useMondayClients(): UseMondayClientsResult {
   const initialFiltered = initialAll.filter((c) =>
     isClientNoBiaSoftById(c, initialAllIds)
   );
+  const initialTimeline = new Map<string, FaseTransition[]>(
+    cachedTimeline?.value.timeline ?? []
+  );
   const initialUpdate = cachedClients
     ? new Date(Math.min(cachedClients.savedAt, cachedBia?.savedAt ?? cachedClients.savedAt))
     : null;
@@ -72,6 +90,8 @@ export function useMondayClients(): UseMondayClientsResult {
   const [biaAllIds, setBiaAllIds] = useState<Set<string>>(initialAllIds);
   const [responsavelByClientId, setResponsavelByClientId] = useState<Map<string, string>>(initialRespMap);
   const [responsavelByName, setResponsavelByName] = useState<Map<string, string>>(initialRespByName);
+  const [biaTimelineByClientId, setBiaTimelineByClientId] = useState<Map<string, FaseTransition[]>>(initialTimeline);
+  const [biaFaseByClientId, setBiaFaseByClientId] = useState<Map<string, string>>(new Map());
   const [responsaveis, setResponsaveis] = useState<string[]>(initialRespList);
   const [loading, setLoading] = useState(initialAll.length === 0);
   const [error, setError] = useState<string | null>(null);
@@ -82,9 +102,10 @@ export function useMondayClients(): UseMondayClientsResult {
 
     async function load() {
       try {
-        const [mainResult, biaData] = await Promise.all([
+        const [mainResult, biaData, biaTimelineRaw] = await Promise.all([
           fetchMondayClients(),
           fetchBiaSoftData(),
+          fetchBiaFaseTimeline(90), // últimos 90 dias de transições
         ]);
         if (!active) return;
         const filtered = mainResult.clients.filter((c) =>
@@ -97,6 +118,28 @@ export function useMondayClients(): UseMondayClientsResult {
         setResponsavelByClientId(biaData.responsavelByClientId);
         setResponsavelByName(biaData.responsavelByName);
         setResponsaveis(biaData.responsaveis);
+
+        // biaTimelineRaw vem indexado por bia_item_id (id do item no board Bia Soft).
+        // Reindexa por monday_principal_client_id usando o bridge clientIdsByBiaItemId.
+        const timelineByClient = new Map<string, FaseTransition[]>();
+        for (const [biaItemId, transitions] of biaTimelineRaw) {
+          const linkedIds = biaData.clientIdsByBiaItemId.get(biaItemId) ?? [];
+          for (const cid of linkedIds) {
+            // Se um mesmo monday_client_id aparece em multiplos bia_items,
+            // concatenamos as transicoes (caso raro, mas seguro).
+            const arr = timelineByClient.get(cid) ?? [];
+            arr.push(...transitions);
+            timelineByClient.set(cid, arr);
+          }
+        }
+        // Re-ordena por timestamp asc
+        for (const [k, arr] of timelineByClient) {
+          arr.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+          timelineByClient.set(k, arr);
+        }
+        setBiaTimelineByClientId(timelineByClient);
+        setBiaFaseByClientId(biaData.faseByClientId);
+
         setError(null);
         setLastUpdate(new Date());
 
@@ -107,6 +150,9 @@ export function useMondayClients(): UseMondayClientsResult {
           responsavelByClientId: Array.from(biaData.responsavelByClientId.entries()),
           responsavelByName: Array.from(biaData.responsavelByName.entries()),
           responsaveis: biaData.responsaveis,
+        });
+        writeCache<CachedTimeline>(CACHE_KEY_TIMELINE, {
+          timeline: Array.from(timelineByClient.entries()),
         });
       } catch (e) {
         if (!active) return;
@@ -131,6 +177,8 @@ export function useMondayClients(): UseMondayClientsResult {
     biaAllIds,
     responsavelByClientId,
     responsavelByName,
+    biaTimelineByClientId,
+    biaFaseByClientId,
     responsaveis,
     loading,
     error,

@@ -47,6 +47,8 @@ export function GestorTrafego() {
     clients: mondayClients,
     allClients: mondayAllClients,
     biaActiveIds,
+    biaTimelineByClientId,
+    biaFaseByClientId,
     loading: mondayLoading,
     error: mondayError,
   } = useMondayClients();
@@ -116,6 +118,9 @@ export function GestorTrafego() {
         metaLinks: linksByAccount,
         doutorLinks: doutorLinksByClient,
         biaActiveIds,
+        biaTimelineByClientId,
+        biaFaseByClientId,
+        dateRange: range,
       }),
     [
       clientesParaMetricas,
@@ -124,6 +129,9 @@ export function GestorTrafego() {
       linksByAccount,
       doutorLinksByClient,
       biaActiveIds,
+      biaTimelineByClientId,
+      biaFaseByClientId,
+      range,
     ]
   );
 
@@ -143,6 +151,9 @@ export function GestorTrafego() {
         churned: false,
         churnCutoff: null,
         inactive: false,
+        spendBruto: 0,
+        spendExcluido: 0,
+        periodosManutencao: [],
       }))
     ),
     [summary]

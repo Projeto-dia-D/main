@@ -40,8 +40,14 @@ export function computeCsMetrics(opts: {
   metaLinks: Map<string, ClientMetaLink>; // key: meta_account_id (act_xxx)
   doutorLinks?: Map<string, DoutorClientLink[]>;
   biaActiveIds?: Set<string>;
+  biaTimelineByClientId?: Map<string, import('./monday').FaseTransition[]>;
+  biaFaseByClientId?: Map<string, string>;
+  dateRange?: { start: Date | null; end: Date | null };
 }): CsSummary {
-  const { clients, insights, leads, metaLinks, doutorLinks, biaActiveIds } = opts;
+  const {
+    clients, insights, leads, metaLinks, doutorLinks, biaActiveIds,
+    biaTimelineByClientId, biaFaseByClientId, dateRange,
+  } = opts;
 
   // Set de monday_client_id que têm vínculo Meta salvo
   const linkedMondayClientIds = new Set<string>();
@@ -58,6 +64,9 @@ export function computeCsMetrics(opts: {
     metaLinks,
     doutorLinks,
     biaActiveIds,
+    biaTimelineByClientId,
+    biaFaseByClientId,
+    dateRange,
   });
 
   // Achata os ClientMetrics em uma só lista (de todos gestores + clientsFora)
@@ -78,6 +87,9 @@ export function computeCsMetrics(opts: {
       churned: false,
       churnCutoff: null,
       inactive: false,
+      spendBruto: 0,
+      spendExcluido: 0,
+      periodosManutencao: [],
     })),
   ];
 
@@ -100,11 +112,11 @@ export function computeCsMetrics(opts: {
 
   const cses: CsMetrics[] = [];
   for (const [cs, cms] of byCs) {
-    // Totais SOMENTE somam clientes ativos (com Bia em fase ativa).
-    const ativos = cms.filter((c) => !c.inactive);
-    const totalSpend = ativos.reduce((s, c) => s + c.spend, 0);
-    const totalTransf = ativos.reduce((s, c) => s + c.transferencias, 0);
-    const totalMensagens = ativos.reduce((s, c) => s + c.mensagensIniciadas, 0);
+    // Totais usam o `spend` JÁ AJUSTADO por timeline de Manutenção (vide
+    // explicação em gestorMetrics). Não filtramos por `inactive` aqui.
+    const totalSpend = cms.reduce((s, c) => s + c.spend, 0);
+    const totalTransf = cms.reduce((s, c) => s + c.transferencias, 0);
+    const totalMensagens = cms.reduce((s, c) => s + c.mensagensIniciadas, 0);
     const cpt = totalTransf > 0 ? totalSpend / totalTransf : null;
     cses.push({
       cs,

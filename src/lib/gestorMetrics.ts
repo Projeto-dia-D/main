@@ -1,5 +1,5 @@
 import type { RelatorioBias, SalaryTier } from './types';
-import type { MondayClient } from './monday';
+import type { MondayClient, FaseTransition } from './monday';
 import type { CampaignInsight } from './meta';
 import type { ClientMetaLink, DoutorClientLink } from './linkStorage';
 import { isFimVenda } from './meta';
@@ -10,7 +10,12 @@ import {
   isNomeChatIncompleto,
 } from './metrics';
 import { isGestorExcluido } from '../config';
-import { getClientChurnCutoff, isClientChurned } from './monday';
+import {
+  getClientChurnCutoff,
+  isClientChurned,
+  buildActiveWindows,
+  fracaoAtivaNoDia,
+} from './monday';
 
 export interface ClientMetrics {
   client: MondayClient;
@@ -28,6 +33,12 @@ export interface ClientMetrics {
   /** Cliente está no board Bia Soft mas em fase NÃO ativa (Pausado, Churn, etc.).
    *  Campanhas e leads continuam visíveis, mas spend NÃO entra nos totais do gestor/CS. */
   inactive: boolean;
+  /** Spend REAL antes do ajuste por timeline de Manutenção (transparência). */
+  spendBruto: number;
+  /** Spend EXCLUÍDO porque caiu em períodos de Manutenção. */
+  spendExcluido: number;
+  /** Períodos em que a Bia esteve fora de I.A ativa dentro do range (debug/UI). */
+  periodosManutencao: Array<{ inicio: string; fim: string; status: string | null }>;
 }
 
 export interface GestorMetrics {
@@ -191,19 +202,47 @@ export function computeGestorMetrics(opts: {
   leads: RelatorioBias[];
   metaLinks?: Map<string, ClientMetaLink>;       // key: meta_account_id (act_xxx)
   doutorLinks?: Map<string, DoutorClientLink[]>; // key: monday_client_id → links manuais
-  /** Set de IDs (monday_client_id) de clientes com Bia em fase ATIVA.
-   *  Match exato via board_relation no Bia Soft — sem mais matching por nome.
-   *  Clientes fora desse set entram como `inactive: true`. */
+  /** Set de IDs (monday_client_id) de clientes com Bia em fase ATIVA. */
   biaActiveIds?: Set<string>;
+  /** Map<monday_client_id, timeline de transições de Fase>. Usado pra excluir
+   *  spend de períodos em que a Bia estava em Manutenção/Desativado. */
+  biaTimelineByClientId?: Map<string, FaseTransition[]>;
+  /** Map<monday_client_id, fase atual>. Necessário pra completar a timeline
+   *  (estado após a última transição). */
+  biaFaseByClientId?: Map<string, string>;
+  /** Range de datas em análise. Se omitido, não há cutoff por timeline. */
+  dateRange?: { start: Date | null; end: Date | null };
 }): GestorSummary {
-  const { insights, leads, metaLinks, doutorLinks, biaActiveIds } = opts;
+  const {
+    insights,
+    leads,
+    metaLinks,
+    doutorLinks,
+    biaActiveIds,
+    biaTimelineByClientId,
+    biaFaseByClientId,
+    dateRange,
+  } = opts;
 
-  // Helper: cliente está ativo na Bia? Match exato por monday_client_id via
-  // coluna board_relation "👥 Clientes" no board Bia Soft. Sem mais ambiguidade
-  // de nomes — se o ID do cliente está em biaActiveIds, ele está ativo.
+  // Helper: cliente está ativo na Bia? Match exato por monday_client_id.
   function isClienteAtivo(cl: MondayClient): boolean {
     if (!biaActiveIds || biaActiveIds.size === 0) return true;
     return biaActiveIds.has(cl.id);
+  }
+
+  // Janela do range. Se range não foi passado, usa janela ampla (90 dias atrás → agora)
+  const periodStart = dateRange?.start
+    ? new Date(dateRange.start)
+    : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const periodEnd = dateRange?.end ? new Date(dateRange.end) : new Date();
+
+  // Pré-computa janelas ativas por cliente.
+  function getActiveWindowsForClient(clientId: string): Array<{ start: Date; end: Date }> | null {
+    if (!biaTimelineByClientId) return null;
+    const tl = biaTimelineByClientId.get(clientId);
+    const fase = biaFaseByClientId?.get(clientId);
+    if (!tl && !fase) return null;
+    return buildActiveWindows(tl ?? [], fase, periodStart, periodEnd);
   }
 
   // 0) Remove SEMPRE da lista de clientes os que estão em "chat incompleto"
@@ -329,7 +368,59 @@ export function computeGestorMetrics(opts: {
     const transferencias = leadsDoCliente.filter(isTransferido).length;
     const mensagensIniciadas = leadsDoCliente.length;
     const campaigns = campaignsByClient.get(cl.name) ?? [];
-    const spend = campaigns.reduce((s, c) => s + c.spend, 0);
+    const spendBruto = campaigns.reduce((s, c) => s + c.spend, 0);
+
+    // === AJUSTE POR TIMELINE DE MANUTENÇÃO ===
+    // Se temos timeline + insights diários (date), excluímos a fração de
+    // cada dia em que a Bia estava fora de I.A ativa.
+    const windows = getActiveWindowsForClient(cl.id);
+    let spend = spendBruto;
+    let spendExcluido = 0;
+    const periodosManutencao: Array<{ inicio: string; fim: string; status: string | null }> = [];
+    if (windows && windows.length >= 0) {
+      // Reagrupa campanhas por dia
+      let ajustado = 0;
+      const dailyHasDate = campaigns.some((c) => c.date);
+      if (dailyHasDate) {
+        for (const c of campaigns) {
+          if (c.date) {
+            const frac = fracaoAtivaNoDia(c.date, windows);
+            ajustado += c.spend * frac;
+          } else {
+            // sem date (modo agregado) — mantém spend cheio (fallback)
+            ajustado += c.spend;
+          }
+        }
+        spend = Number(ajustado.toFixed(2));
+        spendExcluido = Number((spendBruto - spend).toFixed(2));
+      } else {
+        // Sem data nos insights — não há como aplicar cutoff por dia.
+        spend = spendBruto;
+      }
+
+      // Lista os "buracos" entre janelas (períodos de Manutenção/Desativado
+      // dentro do range) — pra exibir no relatório de aprovação.
+      let cursor = periodStart;
+      const sortedWindows = [...windows].sort((a, b) => a.start.getTime() - b.start.getTime());
+      for (const w of sortedWindows) {
+        if (w.start.getTime() > cursor.getTime()) {
+          periodosManutencao.push({
+            inicio: cursor.toISOString(),
+            fim: w.start.toISOString(),
+            status: null, // pode preencher se quiser olhar a transição exata
+          });
+        }
+        cursor = w.end > cursor ? w.end : cursor;
+      }
+      if (cursor.getTime() < periodEnd.getTime()) {
+        periodosManutencao.push({
+          inicio: cursor.toISOString(),
+          fim: periodEnd.toISOString(),
+          status: null,
+        });
+      }
+    }
+
     const cpt = transferencias > 0 ? spend / transferencias : null;
     const metaMatchVia = campaigns.length > 0
       ? (metaMatchByClient.get(cl.name) ?? null)
@@ -349,6 +440,9 @@ export function computeGestorMetrics(opts: {
       churned,
       churnCutoff,
       inactive: !isClienteAtivo(cl),
+      spendBruto: Number(spendBruto.toFixed(2)),
+      spendExcluido,
+      periodosManutencao,
     };
   });
 
@@ -369,13 +463,17 @@ export function computeGestorMetrics(opts: {
 
   const gestores: GestorMetrics[] = [];
   for (const [gestor, cms] of byGestor) {
-    // Totais SOMENTE somam clientes ativos (com Bia em fase I.A ativa/Manutenção).
-    // Clientes inativos continuam visíveis na lista `clients` mas não inflam
-    // as métricas agregadas do gestor.
-    const ativos = cms.filter((c) => !c.inactive);
-    const totalSpend = ativos.reduce((s, c) => s + c.spend, 0);
-    const totalTransf = ativos.reduce((s, c) => s + c.transferencias, 0);
-    const totalMensagens = ativos.reduce((s, c) => s + c.mensagensIniciadas, 0);
+    // Totais usam o `spend` JÁ AJUSTADO por timeline de Manutenção.
+    // - Cliente nunca ativo no período → spend = 0 → contribuição 0
+    // - Cliente parcialmente ativo → spend = fração ativa × spend bruto
+    // - Cliente totalmente ativo → spend = spend bruto
+    //
+    // O flag `inactive` (= não está em I.A ativa AGORA) é só pra UI.
+    // Não filtramos por ele aqui, porque um cliente atualmente em Manutenção
+    // pode ter sido ativo parte do período e essa parte deve contar.
+    const totalSpend = cms.reduce((s, c) => s + c.spend, 0);
+    const totalTransf = cms.reduce((s, c) => s + c.transferencias, 0);
+    const totalMensagens = cms.reduce((s, c) => s + c.mensagensIniciadas, 0);
     const cpt = totalTransf > 0 ? totalSpend / totalTransf : null;
     gestores.push({
       gestor,

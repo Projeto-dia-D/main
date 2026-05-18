@@ -43,6 +43,8 @@ export function CS() {
     clients: mondayClients,
     allClients: mondayAllClients,
     biaActiveIds,
+    biaTimelineByClientId,
+    biaFaseByClientId,
     loading: mondayLoading,
     error: mondayError,
   } = useMondayClients();
@@ -95,6 +97,9 @@ export function CS() {
         metaLinks: linksByAccount,
         doutorLinks: doutorLinksByClient,
         biaActiveIds,
+        biaTimelineByClientId,
+        biaFaseByClientId,
+        dateRange: range,
       }),
     [
       clientesParaMetricas,
@@ -103,6 +108,9 @@ export function CS() {
       linksByAccount,
       doutorLinksByClient,
       biaActiveIds,
+      biaTimelineByClientId,
+      biaFaseByClientId,
+      range,
     ]
   );
 

@@ -473,6 +473,13 @@ function extractClientIds(item: BiaItem): string[] {
   return cv?.linked_item_ids ?? [];
 }
 
+/** Transição de Fase: timestamp em que mudou + label antiga + nova. */
+export interface FaseTransition {
+  ts: string;           // ISO timestamp UTC
+  prev: string | null;
+  next: string | null;
+}
+
 export interface BiaSoftData {
   /** Set de nomes (normalizados) — mantido por compat, mas use IDs quando possível. */
   activeNames: Set<string>;
@@ -483,6 +490,10 @@ export interface BiaSoftData {
   allIds: Set<string>;
   /** Map<monday_client_id, responsável> — responsável pelo cliente. */
   responsavelByClientId: Map<string, string>;
+  /** Map<monday_client_id, fase atual>. */
+  faseByClientId: Map<string, string>;
+  /** Map<bia_item_id, monday_client_id[]> — bridge entre os 2 boards. */
+  clientIdsByBiaItemId: Map<string, string[]>;
   /** Mantido por compat. */
   responsavelByName: Map<string, string>;
   /** Lista única de responsáveis (Gabriel, Eduardo) com Fase ativa. */
@@ -501,11 +512,14 @@ export async function fetchBiaSoftData(): Promise<BiaSoftData> {
   const allIds = new Set<string>();
   const responsavelByName = new Map<string, string>();
   const responsavelByClientId = new Map<string, string>();
+  const faseByClientId = new Map<string, string>();
+  const clientIdsByBiaItemId = new Map<string, string[]>();
   const responsaveisSet = new Set<string>();
   if (!config.MONDAY_TOKEN) {
     return {
       activeNames, allNames, activeIds, allIds,
       responsavelByName, responsavelByClientId,
+      faseByClientId, clientIdsByBiaItemId,
       responsaveis: [],
     };
   }
@@ -514,13 +528,18 @@ export async function fetchBiaSoftData(): Promise<BiaSoftData> {
     const key = normalize(it.name);
     if (!key) return;
     allNames.add(key);
-    const isAtivo = isFaseAtiva(extractFase(it));
+    const fase = extractFase(it);
+    const isAtivo = isFaseAtiva(fase);
     if (isAtivo) activeNames.add(key);
     // Coluna 👥 Clientes — IDs do Monday principal vinculados a este item
     const linkedIds = extractClientIds(it);
+    if (linkedIds.length > 0) {
+      clientIdsByBiaItemId.set(it.id, linkedIds);
+    }
     for (const cid of linkedIds) {
       allIds.add(cid);
       if (isAtivo) activeIds.add(cid);
+      if (fase) faseByClientId.set(cid, fase);
     }
     const resp = extractResponsavel(it);
     if (resp) {
@@ -562,8 +581,201 @@ export async function fetchBiaSoftData(): Promise<BiaSoftData> {
     allIds,
     responsavelByName,
     responsavelByClientId,
+    faseByClientId,
+    clientIdsByBiaItemId,
     responsaveis: Array.from(responsaveisSet).sort(),
   };
+}
+
+// ============================================================================
+// Activity Log do Bia Soft — timeline de mudanças de Fase por cliente
+// ============================================================================
+
+interface ActivityLogRaw {
+  id: string;
+  event: string;
+  data: string;       // JSON string com pulse_id, previous_value, value
+  created_at: string; // Monday usa 100-ns intervals (string numerica)
+}
+
+interface ActivityLogsResp {
+  data?: {
+    boards?: Array<{
+      activity_logs: ActivityLogRaw[];
+    }>;
+  };
+  errors?: Array<{ message: string }>;
+  error_message?: string;
+}
+
+const ACTIVITY_LOGS_QUERY = `
+  query ($boardId: ID!, $limit: Int!, $page: Int!, $colId: String!, $from: ISO8601DateTime!) {
+    boards(ids: [$boardId]) {
+      activity_logs(
+        limit: $limit
+        page: $page
+        column_ids: [$colId]
+        from: $from
+      ) {
+        id
+        event
+        data
+        created_at
+      }
+    }
+  }
+`;
+
+/**
+ * Converte o created_at do Monday (string numerica em 100-ns intervals)
+ * em uma string ISO UTC.
+ */
+function mondayTsToIso(createdAt: string): string | null {
+  // Monday: numero representa 100-nanosecond units desde epoch
+  // → divide por 10000 pra obter ms
+  const n = Number(createdAt);
+  if (!Number.isFinite(n)) return null;
+  const ms = Math.floor(n / 10000);
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+interface ParsedLog {
+  pulseId: string;
+  prev: string | null;
+  next: string | null;
+  ts: string;
+}
+
+function parseActivityLog(log: ActivityLogRaw): ParsedLog | null {
+  try {
+    const d = JSON.parse(log.data) as {
+      pulse_id?: number | string;
+      previous_value?: { label?: { text?: string } } | null;
+      value?: { label?: { text?: string } } | null;
+    };
+    const pulseId = d.pulse_id != null ? String(d.pulse_id) : '';
+    if (!pulseId) return null;
+    const prev = d.previous_value?.label?.text ?? null;
+    const next = d.value?.label?.text ?? null;
+    const ts = mondayTsToIso(log.created_at);
+    if (!ts) return null;
+    return { pulseId, prev, next, ts };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Busca a timeline de mudanças da coluna "Fase" no board Bia Soft.
+ * Retorna Map<bia_item_id, FaseTransition[]> ordenado por timestamp asc.
+ *
+ * @param sinceDays quantos dias atrás buscar (default 90).
+ */
+export async function fetchBiaFaseTimeline(
+  sinceDays: number = 90
+): Promise<Map<string, FaseTransition[]>> {
+  const out = new Map<string, FaseTransition[]>();
+  if (!config.MONDAY_TOKEN) return out;
+  const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000);
+  const fromIso = since.toISOString();
+
+  try {
+    let page = 1;
+    while (page < 50) {
+      const resp = await gql<ActivityLogsResp>(ACTIVITY_LOGS_QUERY, {
+        boardId: BIA_SOFT_BOARD_ID,
+        limit: 500,
+        page,
+        colId: BIA_FASE_COL_ID,
+        from: fromIso,
+      });
+      const logs = resp.data?.boards?.[0]?.activity_logs ?? [];
+      if (logs.length === 0) break;
+      for (const raw of logs) {
+        const p = parseActivityLog(raw);
+        if (!p) continue;
+        const arr = out.get(p.pulseId) ?? [];
+        arr.push({ ts: p.ts, prev: p.prev, next: p.next });
+        out.set(p.pulseId, arr);
+      }
+      if (logs.length < 500) break;
+      page++;
+    }
+    // Ordena ascendente por timestamp
+    for (const [k, arr] of out) {
+      arr.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+      out.set(k, arr);
+    }
+  } catch (e) {
+    console.warn('[Monday] falha ao buscar activity_logs:', e);
+  }
+  return out;
+}
+
+/**
+ * Constrói "janelas ativas" para um cliente no período [start, end].
+ * Retorna intervalos [s, e] em que o cliente estava em fase ativa.
+ *
+ * @param timeline transições do board Bia Soft (do mais antigo ao mais recente)
+ * @param currentFase fase ATUAL do cliente (a do board, hoje)
+ * @param start início do período de análise (Date)
+ * @param end fim do período de análise (Date)
+ */
+export function buildActiveWindows(
+  timeline: FaseTransition[],
+  currentFase: string | null | undefined,
+  start: Date,
+  end: Date,
+  isFaseAtivaCheck: (s: string | null | undefined) => boolean = isFaseAtiva
+): Array<{ start: Date; end: Date }> {
+  const windows: Array<{ start: Date; end: Date }> = [];
+  if (!timeline || timeline.length === 0) {
+    // Sem transições no período → assume fase atual durante todo o intervalo
+    if (isFaseAtivaCheck(currentFase)) {
+      windows.push({ start, end });
+    }
+    return windows;
+  }
+  // Estado inicial = prev do primeiro log
+  let state: string | null | undefined = timeline[0].prev ?? currentFase;
+  let cursor = new Date(0); // antes de tudo
+  for (const tr of timeline) {
+    const trTs = new Date(tr.ts);
+    if (isFaseAtivaCheck(state)) {
+      const ws = cursor.getTime() > start.getTime() ? cursor : start;
+      const we = trTs.getTime() < end.getTime() ? trTs : end;
+      if (we > ws) windows.push({ start: ws, end: we });
+    }
+    state = tr.next;
+    cursor = trTs;
+  }
+  // Após a última transição
+  if (isFaseAtivaCheck(state)) {
+    const ws = cursor.getTime() > start.getTime() ? cursor : start;
+    if (end > ws) windows.push({ start: ws, end });
+  }
+  return windows;
+}
+
+/**
+ * Fração 0..1 de um dia que o cliente esteve ativo.
+ */
+export function fracaoAtivaNoDia(
+  dateStr: string, // YYYY-MM-DD
+  windows: Array<{ start: Date; end: Date }>
+): number {
+  const d0 = new Date(`${dateStr}T00:00:00.000Z`);
+  const d1 = new Date(`${dateStr}T23:59:59.999Z`);
+  const total = d1.getTime() - d0.getTime();
+  let ativo = 0;
+  for (const w of windows) {
+    const s = w.start.getTime() > d0.getTime() ? w.start : d0;
+    const e = w.end.getTime() < d1.getTime() ? w.end : d1;
+    if (e.getTime() > s.getTime()) ativo += e.getTime() - s.getTime();
+  }
+  return total > 0 ? ativo / total : 0;
 }
 
 /**
