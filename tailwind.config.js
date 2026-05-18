@@ -34,6 +34,10 @@ export default {
         'pulse-flame': 'pulse-flame 2.4s ease-in-out infinite',
         'fade-in': 'fade-in 0.3s ease-out',
         'slide-up': 'slide-up 0.4s ease-out',
+        // Modo herói — designer bateu 1 salário
+        'hero-fire-green': 'hero-fire-green 1.4s ease-in-out infinite',
+        'hero-fire-green-offset': 'hero-fire-green 1.4s ease-in-out 0.5s infinite',
+        'hero-flicker': 'hero-flicker 0.18s ease-in-out infinite',
       },
       keyframes: {
         'pulse-orange': {
@@ -61,6 +65,26 @@ export default {
         'slide-up': {
           '0%': { opacity: '0', transform: 'translateY(8px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        // Pulsação de fogo verde — múltiplas camadas pra efeito de chamas
+        'hero-fire-green': {
+          '0%, 100%': {
+            opacity: '0.55',
+            transform: 'scale(1)',
+            boxShadow:
+              '0 0 25px 4px rgba(34,197,94,0.7), 0 0 50px 10px rgba(74,222,128,0.5), 0 0 80px 18px rgba(34,197,94,0.3)',
+          },
+          '50%': {
+            opacity: '1',
+            transform: 'scale(1.06)',
+            boxShadow:
+              '0 0 40px 8px rgba(34,197,94,0.95), 0 0 80px 18px rgba(74,222,128,0.7), 0 0 120px 30px rgba(34,197,94,0.4)',
+          },
+        },
+        // Flicker rápido — simula chama tremendo
+        'hero-flicker': {
+          '0%, 100%': { opacity: '0.95' },
+          '50%': { opacity: '1' },
         },
       },
     },

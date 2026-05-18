@@ -1,7 +1,16 @@
-import { Palette, CheckCircle2, RefreshCw, Users, Clock, ChevronRight, type LucideIcon } from 'lucide-react';
+import { Palette, CheckCircle2, RefreshCw, Users, Clock, ChevronRight, Zap, Trophy, type LucideIcon } from 'lucide-react';
 import { AnimatedNumber } from '../AnimatedNumber';
-import { pctManutColors, pctLabel } from '../../lib/designMetrics';
+import {
+  pctManutColors,
+  pctLabel,
+  tierColor,
+  tierForDemandasDia,
+  tierForPctManutencao,
+  tierLabel,
+  formatBonusTotal,
+} from '../../lib/designMetrics';
 import type { DesignSummary } from '../../lib/designMetrics';
+import type { SalaryTier } from '../../lib/types';
 
 interface Props {
   summary: DesignSummary;
@@ -23,14 +32,36 @@ function formatRelative(d: Date | null): string {
 }
 
 export function PainelGeralDesign({ summary, lastUpdate, onOpenFeitos, onOpenManutencoes, onOpenDesigners }: Props) {
-  const colors = pctManutColors(summary.pctManutencao);
+  const colorsManut = pctManutColors(summary.pctManutencao);
+
+  // Entregas por dia POR DESIGNER (média) — mesma escala usada nos cards
+  // individuais, pra que o tier (0 / 0,5 / 1) corresponda ao do designer.
+  // Fórmula: total / dias úteis / qtd designers ativos
+  const designersCount = summary.designers.length;
+  const entregasDiaEquipe = summary.diasNoPeriodo > 0
+    ? summary.totalEventosFeito / summary.diasNoPeriodo
+    : 0;
+  const entregasDiaPorDesigner = designersCount > 0
+    ? entregasDiaEquipe / designersCount
+    : 0;
+
+  const tierDem = tierForDemandasDia(entregasDiaPorDesigner);
+  const colorsDem = tierColor(tierDem);
+  // tier de manutenção igual ao card do designer: só conta se há entregas
+  const tierMan: SalaryTier = summary.feitasUnicas > 0
+    ? tierForPctManutencao(summary.pctManutencao)
+    : 0;
+
+  // BÔNUS DO PERÍODO — regra "vence o menor" (igual cada designer).
+  const tierGeral = (Math.min(tierDem, tierMan) as SalaryTier);
+  const colorsGeral = tierColor(tierGeral);
 
   return (
     <section
       className={[
         'rounded-2xl border bg-burst-card p-8 relative overflow-hidden animate-slide-up',
-        colors.border,
-        colors.glow,
+        colorsGeral.border,
+        colorsGeral.glow,
       ].join(' ')}
     >
       <div className="absolute -top-24 -right-24 w-64 h-64 rounded-full bg-burst-orange/10 blur-3xl pointer-events-none" />
@@ -40,7 +71,7 @@ export function PainelGeralDesign({ summary, lastUpdate, onOpenFeitos, onOpenMan
         <div>
           <div className="text-xs uppercase tracking-[0.25em] text-burst-muted">Painel Geral</div>
           <h2 className="font-display text-4xl text-white tracking-wider flex items-center gap-3">
-            DESIGN — % MANUTENÇÃO <Palette className="text-burst-orange" />
+            DESIGN — DESEMPENHO <Palette className="text-burst-orange" />
           </h2>
         </div>
         <div className="flex items-center gap-2 text-xs text-burst-muted">
@@ -51,38 +82,89 @@ export function PainelGeralDesign({ summary, lastUpdate, onOpenFeitos, onOpenMan
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 relative">
-        <div className="lg:col-span-2 flex flex-col items-start justify-center">
-          <div className="flex items-baseline gap-4 flex-wrap">
-            <AnimatedNumber
-              value={summary.pctManutencao}
-              decimals={1}
-              suffix="%"
-              className={`font-display text-[7rem] leading-none ${colors.text} drop-shadow-[0_0_30px_rgba(255,107,0,0.35)]`}
-            />
-            <div className={`px-4 py-2 rounded-lg border ${colors.border} ${colors.bg}`}>
-              <div className={`font-display text-2xl tracking-wider ${colors.text}`}>
-                {pctLabel(summary.pctManutencao)}
+        <div className="lg:col-span-2 flex flex-col gap-4 justify-center">
+          {/* BANNER DO BÔNUS DO PERÍODO — destaque grande, vence o menor tier */}
+          <div
+            className={`rounded-xl border-2 ${colorsGeral.border} ${colorsGeral.bg} ${colorsGeral.glow} px-5 py-3 flex items-center justify-between gap-4 flex-wrap`}
+          >
+            <div className="flex items-center gap-3">
+              <Trophy size={28} className={colorsGeral.text} />
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.25em] text-burst-muted">
+                  Bônus do período (regra: vence o menor)
+                </div>
+                <div className={`font-display text-3xl tracking-wider ${colorsGeral.text}`}>
+                  {formatBonusTotal(tierGeral)}
+                </div>
+              </div>
+            </div>
+            <div className="text-[11px] text-burst-muted text-right">
+              <div>
+                Demandas/dia: <span className={`font-bold ${colorsDem.text}`}>{tierLabel(tierDem)}</span>
+              </div>
+              <div>
+                % Manutenção: <span className={`font-bold ${colorsManut.text}`}>{tierLabel(tierMan)}</span>
               </div>
             </div>
           </div>
-          <div className="mt-3 text-xs text-burst-muted space-y-1">
-            <div>
-              <span className="text-white font-semibold">{summary.manutencoesUnicas}</span> demanda(s) tiveram manutenção entre{' '}
-              <span className="text-white font-semibold">{summary.feitasUnicas}</span> demanda(s) única(s) em{' '}
-              <span className="text-white font-semibold">{summary.diasNoPeriodo}</span> dia(s) •{' '}
-              <span className="text-burst-orange-bright font-semibold">
-                {(summary.totalEventosFeito / summary.diasNoPeriodo).toFixed(1)} entregas/dia
-              </span>{' '}
-              (equipe inteira)
+
+          {/* DUAS métricas lado a lado: ENTREGAS/DIA (destaque maior) + % MANUTENÇÃO */}
+          <div className="grid grid-cols-1 sm:grid-cols-[1.5fr_1fr] gap-4">
+            {/* ENTREGAS/DIA POR DESIGNER — PRINCIPAL (peso maior) */}
+            <div className={`rounded-xl border-2 ${colorsDem.border} ${colorsDem.bg} p-5 flex flex-col`}>
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.25em] text-burst-muted">
+                <Zap size={12} className={colorsDem.text} /> Demandas/dia (média/designer)
+              </div>
+              <div className="flex items-baseline gap-3 flex-wrap mt-1">
+                <AnimatedNumber
+                  value={entregasDiaPorDesigner}
+                  decimals={1}
+                  className={`font-display text-[7rem] leading-none ${colorsDem.text} drop-shadow-[0_0_30px_rgba(34,197,94,0.25)]`}
+                />
+                <div className={`px-3 py-1 rounded-md border ${colorsDem.border} ${colorsDem.bg}`}>
+                  <div className={`font-display text-xl tracking-wider ${colorsDem.text}`}>
+                    {tierLabel(tierDem)}
+                  </div>
+                </div>
+              </div>
+              <div className="text-[11px] text-burst-muted mt-2">
+                <span className="text-white font-semibold">{summary.totalEventosFeito}</span> entregas
+                {' ÷ '}
+                <span className="text-white font-semibold">{summary.diasNoPeriodo}</span> dia(s) úteis
+                {' ÷ '}
+                <span className="text-white font-semibold">{designersCount}</span> designer(s) ativo(s)
+                {' • equipe inteira: '}
+                <span className="text-white/85">{entregasDiaEquipe.toFixed(1)}/dia</span>
+              </div>
             </div>
-            <div className="text-burst-muted/70">
-              <span className="text-white/80">{summary.totalEventosFeito}</span> entregas totais
-              {summary.totalEventosFeito !== summary.feitasUnicas && (
-                <span className="text-burst-muted/60"> (incluindo {summary.totalEventosFeito - summary.feitasUnicas} re-marcações pós-manutenção)</span>
-              )}
-              {' • '}
-              <span className="text-white/80">{summary.totalEventosManutencao + summary.totalEventosManutencaoC}</span> eventos de manutenção
+
+            {/* % MANUTENÇÃO — SECUNDÁRIO (peso menor) */}
+            <div className={`rounded-xl border ${colorsManut.border} ${colorsManut.bg} p-4 flex flex-col`}>
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.25em] text-burst-muted">
+                <RefreshCw size={11} className={colorsManut.text} /> % Manutenção
+              </div>
+              <AnimatedNumber
+                value={summary.pctManutencao}
+                decimals={1}
+                suffix="%"
+                className={`font-display text-[4rem] leading-none ${colorsManut.text} mt-1`}
+              />
+              <div className={`inline-flex self-start mt-1 px-2 py-0.5 rounded border ${colorsManut.border} ${colorsManut.bg}`}>
+                <span className={`text-[11px] uppercase tracking-wider font-bold ${colorsManut.text}`}>
+                  {pctLabel(summary.pctManutencao)}
+                </span>
+              </div>
+              <div className="text-[11px] text-burst-muted mt-2">
+                <span className="text-white font-semibold">{summary.manutencoesUnicas}</span> demanda(s) afetada(s)
+                {' / '}
+                <span className="text-white font-semibold">{summary.feitasUnicas}</span> únicas
+              </div>
             </div>
+          </div>
+
+          <div className="text-[11px] text-burst-muted/70">
+            <span className="text-white/80">{summary.totalEventosManutencao + summary.totalEventosManutencaoC}</span> eventos
+            de manutenção no período
           </div>
         </div>
 

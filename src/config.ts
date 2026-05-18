@@ -105,6 +105,24 @@ export const DESIGNER_LABELS: Record<string, string> = {
   'lais beisheim': 'Lais Beisheim',
 };
 
+// Foto "modo herói" — aparece com efeito de fogo verde quando o designer
+// bate 1 salário. Salvar os arquivos em public/designers/<nome>.png
+export const DESIGNER_FOTOS: Record<string, string> = {
+  'felipe moraes': '/designers/felipe.png',
+  'paulo henrique': '/designers/paulo.png',
+  'lais beisheim': '/designers/lais.png',
+};
+
+/** Caminho da foto do designer (qualquer variação do nome). */
+export function getDesignerFoto(nome: string | null | undefined): string | null {
+  if (!nome) return null;
+  const n = nome.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  for (const [frag, path] of Object.entries(DESIGNER_FOTOS)) {
+    if (n.includes(frag)) return path;
+  }
+  return null;
+}
+
 /**
  * Pra um campo `designer_responsavel` que pode conter múltiplos nomes
  * (separados por vírgula, ex: "Felipe Moraes, Jean Carlos Tigre"), retorna

@@ -6,6 +6,7 @@ import {
   formatBonusTotal,
 } from '../../lib/designMetrics';
 import type { DesignerMetrics } from '../../lib/designMetrics';
+import { DesignerHeroImage } from './DesignerHeroImage';
 
 interface Props {
   designer: DesignerMetrics;
@@ -32,8 +33,15 @@ export function PainelMiniDesigner({ designer, onClick }: Props) {
     >
       <div className="absolute -top-16 -right-16 w-40 h-40 rounded-full bg-burst-orange/5 blur-3xl pointer-events-none" />
 
-      <div className="flex items-center justify-between mb-3 relative">
-        <div className="min-w-0">
+      {/* Modo herói: banner grande quando bateu 1 salário cheio */}
+      {designer.bonusTotal === 1 && (
+        <div className="flex justify-center mb-3 relative">
+          <DesignerHeroImage designerNome={designer.nome} size={120} />
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-3 relative gap-2">
+        <div className="min-w-0 flex-1">
           <div className="text-[10px] uppercase tracking-[0.2em] text-burst-muted">Designer</div>
           <h3 className="font-display text-2xl text-white tracking-wide truncate flex items-center gap-2">
             {designer.nome}

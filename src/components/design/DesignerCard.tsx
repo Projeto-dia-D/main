@@ -7,6 +7,7 @@ import {
 } from '../../lib/designMetrics';
 import type { DesignerMetrics } from '../../lib/designMetrics';
 import { AnimatedNumber } from '../AnimatedNumber';
+import { DesignerHeroImage } from './DesignerHeroImage';
 
 function formatDateBR(iso: string): string {
   const [y, m, d] = iso.split('-');
@@ -38,8 +39,15 @@ export function DesignerCard({ designer, onClickFeitas, onClickManutencoes }: Pr
         colorsBonus.glow,
       ].join(' ')}
     >
+      {/* Modo herói: banner grande centralizado quando bateu 1 salário cheio */}
+      {designer.bonusTotal === 1 && (
+        <div className="flex justify-center -mt-1 mb-1">
+          <DesignerHeroImage designerNome={designer.nome} size={160} />
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h4 className="font-display text-xl text-white tracking-wide truncate">{designer.nome}</h4>
           <div className={`inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded text-[10px] uppercase tracking-wider font-bold border ${status.cls}`}>
             <Circle size={6} className={`fill-current ${status.dot}`} />
