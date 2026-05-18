@@ -1,25 +1,11 @@
 import { useState } from 'react';
 import { CalendarRange, X } from 'lucide-react';
 import type { DateRange } from '../../lib/metrics';
+import { DatePicker } from '../DatePicker';
 
 interface Props {
   range: DateRange;
   onChange: (r: DateRange) => void;
-}
-
-function toInputValue(d: Date | null): string {
-  if (!d) return '';
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function parseInput(v: string, endOfDay: boolean): Date | null {
-  if (!v) return null;
-  const [y, m, d] = v.split('-').map((s) => parseInt(s, 10));
-  if (!y || !m || !d) return null;
-  return endOfDay ? new Date(y, m - 1, d, 23, 59, 59, 999) : new Date(y, m - 1, d, 0, 0, 0, 0);
 }
 
 function presetRange(days: number): DateRange {
@@ -51,12 +37,23 @@ export function diaDRange(): DateRange {
   return { start, end };
 }
 
+// Este mês — do dia 1 do mês corrente até hoje.
+// Exportado pra usar como default em telas que precisam abrir já filtradas.
+export function esteMesRange(): DateRange {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
 interface Preset {
   label: string;
   getRange: () => DateRange;
 }
 
 const PRESETS: Preset[] = [
+  { label: 'Este mês', getRange: esteMesRange },
   { label: 'Dia D', getRange: diaDRange },
   { label: 'Hoje', getRange: () => presetRange(1) },
   { label: 'Ontem', getRange: ontemRange },
@@ -99,7 +96,7 @@ export function DateRangeFilter({ range, onChange }: Props) {
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-2 z-40 w-80 bg-burst-card border border-burst-border rounded-xl p-4 shadow-card">
+          <div className="absolute right-0 top-full mt-2 z-40 w-96 bg-burst-card border border-burst-border rounded-xl p-4 shadow-card">
             <div className="text-[11px] uppercase tracking-widest text-burst-muted mb-2">
               Atalhos
             </div>
@@ -128,31 +125,24 @@ export function DateRangeFilter({ range, onChange }: Props) {
             </div>
 
             <div className="text-[11px] uppercase tracking-widest text-burst-muted mb-2">
-              Personalizado
+              Personalizado (clique pra abrir calendário ou digite dd/mm/aaaa)
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <label className="flex flex-col gap-1">
+              <div className="flex flex-col gap-1">
                 <span className="text-[10px] uppercase text-burst-muted">Início</span>
-                <input
-                  type="date"
-                  value={toInputValue(range.start)}
-                  onChange={(e) =>
-                    onChange({ ...range, start: parseInput(e.target.value, false) })
-                  }
-                  className="bg-black/30 border border-burst-border rounded-md px-2 py-1.5 text-sm text-white focus:outline-none focus:border-burst-orange"
+                <DatePicker
+                  value={range.start}
+                  onChange={(d) => onChange({ ...range, start: d })}
                 />
-              </label>
-              <label className="flex flex-col gap-1">
+              </div>
+              <div className="flex flex-col gap-1">
                 <span className="text-[10px] uppercase text-burst-muted">Fim</span>
-                <input
-                  type="date"
-                  value={toInputValue(range.end)}
-                  onChange={(e) =>
-                    onChange({ ...range, end: parseInput(e.target.value, true) })
-                  }
-                  className="bg-black/30 border border-burst-border rounded-md px-2 py-1.5 text-sm text-white focus:outline-none focus:border-burst-orange"
+                <DatePicker
+                  value={range.end}
+                  endOfDay
+                  onChange={(d) => onChange({ ...range, end: d })}
                 />
-              </label>
+              </div>
             </div>
           </div>
         </>

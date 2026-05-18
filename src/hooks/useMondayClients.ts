@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   fetchMondayClients,
   fetchBiaSoftData,
@@ -20,7 +20,7 @@ export interface UseMondayClientsResult {
   responsavelByClientId: Map<string, string>;
   /** Map<nome do cliente normalizado → responsável>. Usado em Programação que
    *  só tem acesso ao nome do doutor (não ao monday_client_id). */
-  responsavelByClient: Map<string, string>;
+  responsavelByName: Map<string, string>;
   /** Lista única de responsáveis (Gabriel, Eduardo) com pelo menos 1 ativo. */
   responsaveis: string[];
   loading: boolean;
@@ -41,7 +41,7 @@ interface CachedBia {
   allIds: string[];
   activeIds: string[];
   responsavelByClientId: [string, string][];
-  responsavelByName: [string, string][];
+  responsavelByName?: [string, string][];
   responsaveis: string[];
 }
 
@@ -76,9 +76,6 @@ export function useMondayClients(): UseMondayClientsResult {
   const [loading, setLoading] = useState(initialAll.length === 0);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(initialUpdate);
-
-  // Alias estável pra compat com Programacao que importa como responsavelByClient
-  const responsavelByClient = useMemo(() => responsavelByName, [responsavelByName]);
 
   useEffect(() => {
     let active = true;
@@ -133,7 +130,7 @@ export function useMondayClients(): UseMondayClientsResult {
     biaActiveIds,
     biaAllIds,
     responsavelByClientId,
-    responsavelByClient,
+    responsavelByName,
     responsaveis,
     loading,
     error,
