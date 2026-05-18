@@ -14,12 +14,14 @@ import { PainelGeralCs } from '../cs/PainelGeralCs';
 import { PainelMiniCs } from '../cs/PainelMiniCs';
 import { CsCard } from '../cs/CsCard';
 import { CsesTable } from '../cs/CsesTable';
+import { PerfilPessoalCs } from '../cs/PerfilPessoalCs';
 import { ClientesTable } from '../gestor/ClientesTable';
 import { DoutoresList } from '../gestor/DoutoresList';
 import { CampanhasTable } from '../gestor/CampanhasTable';
 import { LeadsTable } from '../programacao/LeadsTable';
 import { TransferidosTable } from '../programacao/TransferidosTable';
-import { isClientChurned } from '../../lib/monday';
+import { isClientChurned, nameMatchesScope } from '../../lib/monday';
+import { useUser, isAdmin } from '../../lib/userContext';
 
 type ModalKind = 'clientes' | 'cses' | null;
 
@@ -37,6 +39,9 @@ export function CS() {
     cs: string;
     type: 'mensagens' | 'transferencias' | 'spend';
   } | null>(null);
+  // View-as (admin): nome do CS pra simular o perfil pessoal dele.
+  // null = visão completa (default do admin).
+  const [viewAsCs, setViewAsCs] = useState<string | null>(null);
 
   const { leads, loading: leadsLoading, error: leadsError } = useLeads();
   const {
@@ -88,7 +93,7 @@ export function CS() {
     return extras.length === 0 ? mondayClients : [...mondayClients, ...extras];
   }, [mondayClients, mondayAllClients, links]);
 
-  const summary = useMemo(
+  const fullSummary = useMemo(
     () =>
       computeCsMetrics({
         clients: clientesParaMetricas,
@@ -113,6 +118,56 @@ export function CS() {
       range,
     ]
   );
+
+  // === FILTRO POR ROLE / VIEW-AS ===
+  // Admin sem view-as → vê tudo
+  // Admin com view-as → vê perfil pessoal daquele CS
+  // CS → vê só seus dados (filtra por scope = nome do CS)
+  // Outros roles → não veem
+  const user = useUser();
+  const summary = useMemo(() => {
+    // Admin com view-as: simula perfil pessoal de um CS específico
+    if (isAdmin(user) && viewAsCs) {
+      const filteredCses = fullSummary.cses.filter((c) => c.cs === viewAsCs);
+      const totalSpend = filteredCses.reduce((s, c) => s + c.totalSpend, 0);
+      const totalTransferencias = filteredCses.reduce((s, c) => s + c.totalTransferencias, 0);
+      const totalMensagens = filteredCses.reduce((s, c) => s + c.totalMensagens, 0);
+      const cptGeral = totalTransferencias > 0
+        ? Number((totalSpend / totalTransferencias).toFixed(2))
+        : null;
+      return {
+        ...fullSummary,
+        cses: filteredCses,
+        totalSpend: Number(totalSpend.toFixed(2)),
+        totalTransferencias,
+        totalMensagens,
+        cptGeral,
+        clientesSemCs: [],
+      };
+    }
+    if (isAdmin(user)) return fullSummary;
+    if (user.role === 'cs' && user.scope) {
+      const filteredCses = fullSummary.cses.filter((c) =>
+        nameMatchesScope(user.scope!, c.cs)
+      );
+      const totalSpend = filteredCses.reduce((s, c) => s + c.totalSpend, 0);
+      const totalTransferencias = filteredCses.reduce((s, c) => s + c.totalTransferencias, 0);
+      const totalMensagens = filteredCses.reduce((s, c) => s + c.totalMensagens, 0);
+      const cptGeral = totalTransferencias > 0
+        ? Number((totalSpend / totalTransferencias).toFixed(2))
+        : null;
+      return {
+        ...fullSummary,
+        cses: filteredCses,
+        totalSpend: Number(totalSpend.toFixed(2)),
+        totalTransferencias,
+        totalMensagens,
+        cptGeral,
+        clientesSemCs: [],
+      };
+    }
+    return { ...fullSummary, cses: [], clientesSemCs: [] };
+  }, [fullSummary, user, viewAsCs]);
 
   if (baseMissing.length > 0 || gestorMissing.length > 0) {
     const missing = [...baseMissing, ...gestorMissing];
@@ -139,6 +194,28 @@ export function CS() {
 
   return (
     <div className="p-6 lg:p-8 flex flex-col gap-6 max-w-[1600px] mx-auto">
+      {/* === Admin view-as: tab bar com nomes dos CSs === */}
+      {isAdmin(user) && fullSummary.cses.length > 0 && (
+        <div className="flex items-center gap-1.5 bg-burst-card border border-burst-border rounded-xl p-1.5 w-fit flex-wrap">
+          <ViewAsTab
+            label="Visão geral"
+            active={viewAsCs === null}
+            onClick={() => setViewAsCs(null)}
+          />
+          {fullSummary.cses.map((c) => {
+            const firstName = c.cs.split(' ')[0];
+            return (
+              <ViewAsTab
+                key={c.cs}
+                label={firstName}
+                active={viewAsCs === c.cs}
+                onClick={() => setViewAsCs(c.cs)}
+              />
+            );
+          })}
+        </div>
+      )}
+
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="text-xs text-burst-muted">
           <span className="text-white font-semibold">{summary.clientesConsiderados}</span> de{' '}
@@ -194,62 +271,97 @@ export function CS() {
         </div>
       ) : (
         <>
-          <PainelGeralCs
-            summary={summary}
-            lastUpdate={lastUpdate}
-            onOpenClientes={() => setOpenModal('clientes')}
-            onOpenCses={() => setOpenModal('cses')}
-          />
+          {/* === VISÃO PERSONALIZADA: CS não-admin OU admin com view-as === */}
+          {((!isAdmin(user) && user.role === 'cs') || (isAdmin(user) && viewAsCs)) &&
+            summary.cses.length === 1 && (
+              <PerfilPessoalCs cs={summary.cses[0]} sectorSummary={fullSummary} />
+            )}
 
-          {summary.cses.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {summary.cses.map((c) => (
-                <PainelMiniCs key={c.cs} cs={c} />
-              ))}
+          {/* === VISÃO ADMIN COMPLETA: painel geral + multi-grid + análise por CS === */}
+          {isAdmin(user) && !viewAsCs && (
+            <>
+              <PainelGeralCs
+                summary={summary}
+                lastUpdate={lastUpdate}
+                onOpenClientes={() => setOpenModal('clientes')}
+                onOpenCses={() => setOpenModal('cses')}
+              />
+
+              {summary.cses.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {summary.cses.map((c) => (
+                    <PainelMiniCs key={c.cs} cs={c} />
+                  ))}
+                </div>
+              )}
+
+              {summary.clientesSemCs.length > 0 && (
+                <div className="rounded-xl border border-burst-warning/40 bg-burst-warning/5 p-4">
+                  <div className="text-xs uppercase tracking-widest text-burst-warning mb-2">
+                    {summary.clientesSemCs.length} cliente(s) vinculados sem CS atribuído no Monday
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {summary.clientesSemCs.slice(0, 30).map((cm) => (
+                      <span
+                        key={cm.client.id}
+                        className="text-xs px-2 py-1 rounded bg-black/30 border border-burst-border text-white/80"
+                      >
+                        {cm.client.name}
+                      </span>
+                    ))}
+                    {summary.clientesSemCs.length > 30 && (
+                      <span className="text-xs text-burst-muted">+{summary.clientesSemCs.length - 30}</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {summary.cses.length > 0 && (
+                <section>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Headphones className="text-burst-orange-bright" size={20} />
+                    <h3 className="font-display text-xl tracking-wider text-white">Análise por CS</h3>
+                    <span className="text-xs text-burst-muted">{summary.cses.length} CS(s)</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                    {summary.cses.map((c) => (
+                      <CsCard
+                        key={c.cs}
+                        cs={c}
+                        onClick={() => setSelectedCs(c.cs)}
+                        onClickMensagens={() => setDrillCs({ cs: c.cs, type: 'mensagens' })}
+                        onClickTransferencias={() => setDrillCs({ cs: c.cs, type: 'transferencias' })}
+                        onClickSpend={() => setDrillCs({ cs: c.cs, type: 'spend' })}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+
+          {/* CS não-admin sem dados: mensagem clara */}
+          {!isAdmin(user) && user.role === 'cs' && summary.cses.length === 0 && (
+            <div className="rounded-2xl border border-burst-warning/40 bg-burst-warning/5 p-8 text-center">
+              <AlertTriangle className="text-burst-warning mx-auto mb-3" size={28} />
+              <div className="text-white font-display text-xl mb-2">
+                Nenhum cliente vinculado a você no período
+              </div>
+              <p className="text-sm text-burst-muted">
+                Não encontramos clientes no Monday com seu nome em "Atendimento CS" para o
+                período selecionado. Verifique a aba <span className="text-white">Programação</span>{' '}
+                ou ajuste o período.
+              </p>
             </div>
           )}
 
-          {summary.clientesSemCs.length > 0 && (
-            <div className="rounded-xl border border-burst-warning/40 bg-burst-warning/5 p-4">
-              <div className="text-xs uppercase tracking-widest text-burst-warning mb-2">
-                {summary.clientesSemCs.length} cliente(s) vinculados sem CS atribuído no Monday
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {summary.clientesSemCs.slice(0, 30).map((cm) => (
-                  <span
-                    key={cm.client.id}
-                    className="text-xs px-2 py-1 rounded bg-black/30 border border-burst-border text-white/80"
-                  >
-                    {cm.client.name}
-                  </span>
-                ))}
-                {summary.clientesSemCs.length > 30 && (
-                  <span className="text-xs text-burst-muted">+{summary.clientesSemCs.length - 30}</span>
-                )}
-              </div>
+          {/* Outros papéis (gestor, programador) — esconde tudo */}
+          {!isAdmin(user) && user.role !== 'cs' && (
+            <div className="rounded-2xl border border-burst-border bg-burst-card p-8 text-center">
+              <p className="text-burst-muted text-sm">
+                Esta aba mostra dados de CS. Use a aba do seu setor.
+              </p>
             </div>
-          )}
-
-          {summary.cses.length > 0 && (
-            <section>
-              <div className="flex items-center gap-2 mb-4">
-                <Headphones className="text-burst-orange-bright" size={20} />
-                <h3 className="font-display text-xl tracking-wider text-white">Análise por CS</h3>
-                <span className="text-xs text-burst-muted">{summary.cses.length} CS(s)</span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                {summary.cses.map((c) => (
-                  <CsCard
-                    key={c.cs}
-                    cs={c}
-                    onClick={() => setSelectedCs(c.cs)}
-                    onClickMensagens={() => setDrillCs({ cs: c.cs, type: 'mensagens' })}
-                    onClickTransferencias={() => setDrillCs({ cs: c.cs, type: 'transferencias' })}
-                    onClickSpend={() => setDrillCs({ cs: c.cs, type: 'spend' })}
-                  />
-                ))}
-              </div>
-            </section>
           )}
         </>
       )}
@@ -336,5 +448,29 @@ export function CS() {
         );
       })()}
     </div>
+  );
+}
+
+function ViewAsTab({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={[
+        'px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors',
+        active
+          ? 'bg-burst-orange/20 text-burst-orange-bright shadow-orange-glow-sm'
+          : 'text-burst-muted hover:text-white hover:bg-white/5',
+      ].join(' ')}
+    >
+      {label}
+    </button>
   );
 }

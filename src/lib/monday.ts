@@ -378,6 +378,11 @@ const BIA_SOFT_BOARD_ID = '9887531051';
 const BIA_FASE_COL_ID = 'color_mktr1m3s';        // coluna "Fase" do board Bia Soft
 const BIA_RESP_COL_ID = 'person';                 // coluna "Responsável" (people)
 const BIA_CLIENT_REL_COL_ID = 'board_relation_mkzc177b'; // coluna "👥 Clientes" — link pro Monday principal
+const BIA_EMAIL_PROG_COL_ID = 'text_mm1m7x5r';    // coluna "Email programador"
+const BIA_EMAIL_CS_COL_ID = 'text_mm1kad0k';      // coluna "Email CS"
+const BIA_EMAIL_GESTOR_COL_ID = 'text_mm1k92bf';  // coluna "Email gestor"
+const BIA_CS_COL_ID = 'lookup_mkzp69ax';          // coluna "CS" (mirror)
+const BIA_GESTOR_COL_ID = 'lookup_mkzphsas';      // coluna "Gestor" (mirror)
 
 // Fases que CONTAM (case-insensitive, sem acento, match por substring).
 // Manutenção REMOVIDA — clientes em manutenção não contam mais nas métricas
@@ -406,6 +411,7 @@ const BIA_LIST_QUERY = `
             id
             text
             ... on BoardRelationValue { linked_item_ids }
+            ... on MirrorValue { display_value }
           }
         }
       }
@@ -424,6 +430,7 @@ const BIA_NEXT_PAGE_QUERY = `
           id
           text
           ... on BoardRelationValue { linked_item_ids }
+          ... on MirrorValue { display_value }
         }
       }
     }
@@ -437,6 +444,7 @@ interface BiaItem {
     id: string;
     text: string | null;
     linked_item_ids?: string[];
+    display_value?: string | null;
   }>;
 }
 
@@ -473,6 +481,27 @@ function extractClientIds(item: BiaItem): string[] {
   return cv?.linked_item_ids ?? [];
 }
 
+function extractColumnText(item: BiaItem, colId: string): string | null {
+  const cv = item.column_values.find((c) => c.id === colId);
+  // Mirror columns retornam o valor em display_value, não em text.
+  return cv?.text?.trim() || cv?.display_value?.trim() || null;
+}
+
+/** Casa nome longo (Bia Soft) com versão curta (Monday principal).
+ *  Ex: "Paula Adamante Souza" casa com "Paula", "Anne Camargo" casa com "Anne Camargo".
+ *  Heurística: o nome `short` é considerado "começo" do nome `full`. */
+export function nameMatchesScope(scope: string, candidate: string): boolean {
+  const a = scope.trim().toLowerCase();
+  const b = candidate.trim().toLowerCase();
+  if (!a || !b) return false;
+  if (a === b) return true;
+  // Scope (longo, ex: "Paula Adamante Souza") começa com candidate (curto: "Paula")
+  if (a.startsWith(b + ' ')) return true;
+  // Ou vice-versa
+  if (b.startsWith(a + ' ')) return true;
+  return false;
+}
+
 /** Transição de Fase: timestamp em que mudou + label antiga + nova. */
 export interface FaseTransition {
   ts: string;           // ISO timestamp UTC
@@ -498,6 +527,13 @@ export interface BiaSoftData {
   responsavelByName: Map<string, string>;
   /** Lista única de responsáveis (Gabriel, Eduardo) com Fase ativa. */
   responsaveis: string[];
+  /** email (lowercase) → nome do CS (do Monday principal via mirror).
+   *  Usado para autenticação por email. */
+  csByEmail: Map<string, string>;
+  /** email (lowercase) → nome do Gestor. */
+  gestorByEmail: Map<string, string>;
+  /** email (lowercase) → nome do Responsável de programação. */
+  programadorByEmail: Map<string, string>;
 }
 
 /**
@@ -515,13 +551,28 @@ export async function fetchBiaSoftData(): Promise<BiaSoftData> {
   const faseByClientId = new Map<string, string>();
   const clientIdsByBiaItemId = new Map<string, string[]>();
   const responsaveisSet = new Set<string>();
+  const csByEmail = new Map<string, string>();
+  const gestorByEmail = new Map<string, string>();
+  const programadorByEmail = new Map<string, string>();
   if (!config.MONDAY_TOKEN) {
     return {
       activeNames, allNames, activeIds, allIds,
       responsavelByName, responsavelByClientId,
       faseByClientId, clientIdsByBiaItemId,
       responsaveis: [],
+      csByEmail, gestorByEmail, programadorByEmail,
     };
+  }
+
+  function processEmails(emailRaw: string | null, name: string | null, map: Map<string, string>) {
+    if (!emailRaw || !name) return;
+    // Pode conter múltiplos emails separados por vírgula/quebra de linha/espaço
+    const parts = emailRaw.split(/[\s,;]+/).filter(Boolean);
+    for (const p of parts) {
+      const e = p.toLowerCase().trim();
+      if (!e.includes('@')) continue;
+      if (!map.has(e)) map.set(e, name);
+    }
   }
 
   function process(it: BiaItem) {
@@ -547,13 +598,30 @@ export async function fetchBiaSoftData(): Promise<BiaSoftData> {
       for (const cid of linkedIds) responsavelByClientId.set(cid, resp);
       if (isAtivo) responsaveisSet.add(resp);
     }
+    // === Emails ===
+    // CS / Gestor: nomes vêm via mirror, emails como texto.
+    const csName = extractColumnText(it, BIA_CS_COL_ID);
+    const gestorName = extractColumnText(it, BIA_GESTOR_COL_ID);
+    processEmails(extractColumnText(it, BIA_EMAIL_CS_COL_ID), csName, csByEmail);
+    processEmails(extractColumnText(it, BIA_EMAIL_GESTOR_COL_ID), gestorName, gestorByEmail);
+    // Programador: email mapeado pro NOME do responsável (people column).
+    processEmails(extractColumnText(it, BIA_EMAIL_PROG_COL_ID), resp, programadorByEmail);
   }
 
   try {
     const first = await gql<BiaListResp>(BIA_LIST_QUERY, {
       boardId: BIA_SOFT_BOARD_ID,
       limit: PAGE_LIMIT,
-      colIds: [BIA_FASE_COL_ID, BIA_RESP_COL_ID, BIA_CLIENT_REL_COL_ID],
+      colIds: [
+        BIA_FASE_COL_ID,
+        BIA_RESP_COL_ID,
+        BIA_CLIENT_REL_COL_ID,
+        BIA_EMAIL_PROG_COL_ID,
+        BIA_EMAIL_CS_COL_ID,
+        BIA_EMAIL_GESTOR_COL_ID,
+        BIA_CS_COL_ID,
+        BIA_GESTOR_COL_ID,
+      ],
     });
     const page = first.data?.boards?.[0]?.items_page;
     if (page) {
@@ -584,6 +652,9 @@ export async function fetchBiaSoftData(): Promise<BiaSoftData> {
     faseByClientId,
     clientIdsByBiaItemId,
     responsaveis: Array.from(responsaveisSet).sort(),
+    csByEmail,
+    gestorByEmail,
+    programadorByEmail,
   };
 }
 
@@ -776,6 +847,120 @@ export function fracaoAtivaNoDia(
     if (e.getTime() > s.getTime()) ativo += e.getTime() - s.getTime();
   }
   return total > 0 ? ativo / total : 0;
+}
+
+// ============================================================================
+// Fetch enxuto pra autenticação — pega só os emails do Bia Soft.
+// Bem mais leve que fetchBiaSoftData (não puxa Fase, board_relation, etc.).
+// ============================================================================
+export interface AuthEmailsResult {
+  csByEmail: Map<string, string>;
+  gestorByEmail: Map<string, string>;
+  programadorByEmail: Map<string, string>;
+}
+
+const AUTH_EMAILS_QUERY = `
+  query ($boardId: ID!, $limit: Int!) {
+    boards(ids: [$boardId]) {
+      items_page(limit: $limit) {
+        cursor
+        items {
+          column_values(ids: [
+            "person",
+            "text_mm1m7x5r",
+            "text_mm1kad0k",
+            "text_mm1k92bf",
+            "lookup_mkzp69ax",
+            "lookup_mkzphsas"
+          ]) {
+            id
+            text
+            ... on MirrorValue { display_value }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const AUTH_EMAILS_NEXT_QUERY = `
+  query ($cursor: String!, $limit: Int!) {
+    next_items_page(cursor: $cursor, limit: $limit) {
+      cursor
+      items {
+        column_values {
+          id
+          text
+          ... on MirrorValue { display_value }
+        }
+      }
+    }
+  }
+`;
+
+export async function fetchAuthEmails(): Promise<AuthEmailsResult> {
+  const csByEmail = new Map<string, string>();
+  const gestorByEmail = new Map<string, string>();
+  const programadorByEmail = new Map<string, string>();
+
+  if (!config.MONDAY_TOKEN) {
+    return { csByEmail, gestorByEmail, programadorByEmail };
+  }
+
+  function getValue(cv: { text?: string | null; display_value?: string | null } | undefined) {
+    return cv?.text?.trim() || cv?.display_value?.trim() || null;
+  }
+  function processEmails(emailRaw: string | null, name: string | null, map: Map<string, string>) {
+    if (!emailRaw || !name) return;
+    const parts = emailRaw.split(/[\s,;]+/).filter(Boolean);
+    for (const p of parts) {
+      const e = p.toLowerCase().trim();
+      if (!e.includes('@')) continue;
+      if (!map.has(e)) map.set(e, name);
+    }
+  }
+
+  interface AuthItem { column_values: Array<{ id: string; text?: string | null; display_value?: string | null }>; }
+  interface AuthPage { cursor: string | null; items: AuthItem[] }
+  interface AuthResp { data?: { boards?: Array<{ items_page: AuthPage }> }; errors?: Array<{ message: string }>; error_message?: string }
+  interface AuthNextResp { data?: { next_items_page: AuthPage }; errors?: Array<{ message: string }>; error_message?: string }
+
+  function processItem(it: AuthItem) {
+    const cvMap: Record<string, { text?: string | null; display_value?: string | null }> = {};
+    for (const cv of it.column_values) cvMap[cv.id] = cv;
+    const resp = getValue(cvMap['person']);
+    const csName = getValue(cvMap['lookup_mkzp69ax']);
+    const gestorName = getValue(cvMap['lookup_mkzphsas']);
+    processEmails(getValue(cvMap['text_mm1kad0k']), csName, csByEmail);
+    processEmails(getValue(cvMap['text_mm1k92bf']), gestorName, gestorByEmail);
+    processEmails(getValue(cvMap['text_mm1m7x5r']), resp, programadorByEmail);
+  }
+
+  try {
+    const first = await gql<AuthResp>(AUTH_EMAILS_QUERY, {
+      boardId: BIA_SOFT_BOARD_ID,
+      limit: PAGE_LIMIT,
+    });
+    const page = first.data?.boards?.[0]?.items_page;
+    if (page) {
+      for (const it of page.items) processItem(it);
+      let cursor = page.cursor;
+      while (cursor) {
+        const next = await gql<AuthNextResp>(AUTH_EMAILS_NEXT_QUERY, {
+          cursor,
+          limit: PAGE_LIMIT,
+        });
+        const np = next.data?.next_items_page;
+        if (!np) break;
+        for (const it of np.items) processItem(it);
+        cursor = np.cursor;
+      }
+    }
+  } catch (e) {
+    console.warn('[Monday] falha ao buscar emails de auth:', e);
+  }
+
+  return { csByEmail, gestorByEmail, programadorByEmail };
 }
 
 /**

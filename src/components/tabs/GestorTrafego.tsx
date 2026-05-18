@@ -10,14 +10,16 @@ import { filterByDateRange, isTransferido, type DateRange } from '../../lib/metr
 import { computeGestorMetrics } from '../../lib/gestorMetrics';
 import { LeadsTable } from '../programacao/LeadsTable';
 import { TransferidosTable } from '../programacao/TransferidosTable';
-import { isClientChurned } from '../../lib/monday';
+import { isClientChurned, nameMatchesScope } from '../../lib/monday';
 import { DoutoresList } from '../gestor/DoutoresList';
+import { useUser, isAdmin } from '../../lib/userContext';
 import { assertConfig, assertGestorConfig } from '../../config';
 import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
 import { Modal } from '../Modal';
 import { PainelGeralGestor } from '../gestor/PainelGeralGestor';
 import { PainelMiniGestor } from '../gestor/PainelMiniGestor';
 import { GestorCard } from '../gestor/GestorCard';
+import { PerfilPessoalGestor } from '../gestor/PerfilPessoalGestor';
 import { ClientesTable } from '../gestor/ClientesTable';
 import { CampanhasTable } from '../gestor/CampanhasTable';
 import { GestoresTable } from '../gestor/GestoresTable';
@@ -41,6 +43,8 @@ export function GestorTrafego() {
     gestor: string;
     type: 'mensagens' | 'transferencias' | 'spend';
   } | null>(null);
+  // View-as (admin): nome do gestor pra simular o perfil pessoal dele.
+  const [viewAsGestor, setViewAsGestor] = useState<string | null>(null);
 
   const { leads, loading: leadsLoading, error: leadsError } = useLeads();
   const {
@@ -109,7 +113,7 @@ export function GestorTrafego() {
     return extras.length === 0 ? mondayClients : [...mondayClients, ...extras];
   }, [mondayClients, mondayAllClients, links]);
 
-  const summary = useMemo(
+  const fullSummary = useMemo(
     () =>
       computeGestorMetrics({
         clients: clientesParaMetricas,
@@ -134,6 +138,56 @@ export function GestorTrafego() {
       range,
     ]
   );
+
+  // === FILTRO POR ROLE / VIEW-AS ===
+  const user = useUser();
+  const summary = useMemo(() => {
+    // Admin com view-as: simula perfil pessoal de um gestor específico
+    if (isAdmin(user) && viewAsGestor) {
+      const filteredGestores = fullSummary.gestores.filter((g) => g.gestor === viewAsGestor);
+      const totalSpend = filteredGestores.reduce((s, g) => s + g.totalSpend, 0);
+      const totalTransferencias = filteredGestores.reduce((s, g) => s + g.totalTransferencias, 0);
+      const totalMensagens = filteredGestores.reduce((s, g) => s + g.totalMensagens, 0);
+      const cptGeral = totalTransferencias > 0
+        ? Number((totalSpend / totalTransferencias).toFixed(2))
+        : null;
+      return {
+        ...fullSummary,
+        gestores: filteredGestores,
+        totalSpend: Number(totalSpend.toFixed(2)),
+        totalTransferencias,
+        totalMensagens,
+        cptGeral,
+        clientsFora: [],
+        orfaos: [],
+        campaignsOrfas: [],
+      };
+    }
+    if (isAdmin(user)) return fullSummary;
+    if (user.role === 'gestor' && user.scope) {
+      const filteredGestores = fullSummary.gestores.filter((g) =>
+        nameMatchesScope(user.scope!, g.gestor)
+      );
+      const totalSpend = filteredGestores.reduce((s, g) => s + g.totalSpend, 0);
+      const totalTransferencias = filteredGestores.reduce((s, g) => s + g.totalTransferencias, 0);
+      const totalMensagens = filteredGestores.reduce((s, g) => s + g.totalMensagens, 0);
+      const cptGeral = totalTransferencias > 0
+        ? Number((totalSpend / totalTransferencias).toFixed(2))
+        : null;
+      return {
+        ...fullSummary,
+        gestores: filteredGestores,
+        totalSpend: Number(totalSpend.toFixed(2)),
+        totalTransferencias,
+        totalMensagens,
+        cptGeral,
+        clientsFora: [],
+        orfaos: [],
+        campaignsOrfas: [],
+      };
+    }
+    return { ...fullSummary, gestores: [], clientsFora: [], orfaos: [], campaignsOrfas: [] };
+  }, [fullSummary, user, viewAsGestor]);
 
   const allClientMetrics = useMemo(
     () => summary.gestores.flatMap((g) => g.clients).concat(
@@ -190,6 +244,28 @@ export function GestorTrafego() {
 
   return (
     <div className="p-6 lg:p-8 flex flex-col gap-6 max-w-[1600px] mx-auto">
+      {/* === Admin view-as: tab bar com nomes dos gestores === */}
+      {isAdmin(user) && fullSummary.gestores.length > 0 && (
+        <div className="flex items-center gap-1.5 bg-burst-card border border-burst-border rounded-xl p-1.5 w-fit flex-wrap">
+          <ViewAsTab
+            label="Visão geral"
+            active={viewAsGestor === null}
+            onClick={() => setViewAsGestor(null)}
+          />
+          {fullSummary.gestores.map((g) => {
+            const firstName = g.gestor.split(' ')[0];
+            return (
+              <ViewAsTab
+                key={g.gestor}
+                label={firstName}
+                active={viewAsGestor === g.gestor}
+                onClick={() => setViewAsGestor(g.gestor)}
+              />
+            );
+          })}
+        </div>
+      )}
+
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="text-xs text-burst-muted">
           <span className="text-white font-semibold">{mondayClients.length}</span> cliente(s) com Bia •{' '}
@@ -278,95 +354,132 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
         </div>
       ) : (
         <>
-          <PainelGeralGestor
-            summary={summary}
-            lastUpdate={lastUpdate}
-            onOpenClientes={() => setOpenModal('clientes')}
-            onOpenCampanhas={() => setOpenModal('campanhas')}
-            onOpenGestores={() => setOpenModal('gestores')}
-          />
+          {/* === VISÃO PERSONALIZADA: Gestor não-admin OU admin com view-as === */}
+          {((!isAdmin(user) && user.role === 'gestor') || (isAdmin(user) && viewAsGestor)) &&
+            summary.gestores.length === 1 && (
+              <PerfilPessoalGestor
+                gestor={summary.gestores[0]}
+                sectorSummary={fullSummary}
+              />
+            )}
 
-          {summary.gestores.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {summary.gestores.map((g) => (
-                <PainelMiniGestor key={g.gestor} gestor={g} />
-              ))}
+          {/* === VISÃO ADMIN COMPLETA === */}
+          {isAdmin(user) && !viewAsGestor && (
+            <>
+              <PainelGeralGestor
+                summary={summary}
+                lastUpdate={lastUpdate}
+                onOpenClientes={() => setOpenModal('clientes')}
+                onOpenCampanhas={() => setOpenModal('campanhas')}
+                onOpenGestores={() => setOpenModal('gestores')}
+              />
+
+              {summary.gestores.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {summary.gestores.map((g) => (
+                    <PainelMiniGestor key={g.gestor} gestor={g} />
+                  ))}
+                </div>
+              )}
+
+              {summary.clientsFora.length > 0 && (
+                <div className="rounded-xl border border-burst-warning/40 bg-burst-warning/5 p-4">
+                  <div className="text-xs uppercase tracking-widest text-burst-warning mb-2">
+                    {summary.clientsFora.length} cliente(s) sem gestor atribuído no Monday
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {summary.clientsFora.slice(0, 30).map((c) => (
+                      <span
+                        key={c.id}
+                        className="text-xs px-2 py-1 rounded bg-black/30 border border-burst-border text-white/80"
+                      >
+                        {c.name}
+                      </span>
+                    ))}
+                    {summary.clientsFora.length > 30 && (
+                      <span className="text-xs text-burst-muted">+{summary.clientsFora.length - 30}</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {summary.gestores.length > 0 && (
+                <section>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Users className="text-burst-orange-bright" size={20} />
+                    <h3 className="font-display text-xl tracking-wider text-white">
+                      Análise por Gestor
+                    </h3>
+                    <span className="text-xs text-burst-muted">
+                      {summary.gestores.length} gestor(es)
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                    {summary.gestores.map((g) => (
+                      <GestorCard
+                        key={g.gestor}
+                        gestor={g}
+                        onClick={() => setSelectedGestor(g.gestor)}
+                        onClickMensagens={() =>
+                          setDrillGestor({ gestor: g.gestor, type: 'mensagens' })
+                        }
+                        onClickTransferencias={() =>
+                          setDrillGestor({ gestor: g.gestor, type: 'transferencias' })
+                        }
+                        onClickSpend={() =>
+                          setDrillGestor({ gestor: g.gestor, type: 'spend' })
+                        }
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {summary.orfaos.length > 0 && (
+                <DiagnosticoOrfaos
+                  orfaos={summary.orfaos}
+                  totalTransferenciasMapeadas={summary.totalTransferencias}
+                  mondayClients={mondayAllClients}
+                  linksByDoutor={doutorLinksByDoutor}
+                  onLink={setDoutorLink}
+                  onUnlink={removeDoutorLink}
+                  missingTable={doutorLinksMissingTable}
+                />
+              )}
+
+              {summary.campaignsOrfas.length > 0 && (
+                <DiagnosticoCampanhasOrfas
+                  campaigns={summary.campaignsOrfas}
+                  mondayClients={mondayAllClients}
+                  linksByAccount={linksByAccount}
+                  onLink={setLink}
+                  onUnlink={removeLink}
+                />
+              )}
+            </>
+          )}
+
+          {/* Gestor não-admin sem dados */}
+          {!isAdmin(user) && user.role === 'gestor' && summary.gestores.length === 0 && (
+            <div className="rounded-2xl border border-burst-warning/40 bg-burst-warning/5 p-8 text-center">
+              <AlertTriangle className="text-burst-warning mx-auto mb-3" size={28} />
+              <div className="text-white font-display text-xl mb-2">
+                Nenhum cliente vinculado a você no período
+              </div>
+              <p className="text-sm text-burst-muted">
+                Não encontramos clientes no Monday com seu nome em "Gestor" para o
+                período selecionado. Ajuste o período ou contate o admin.
+              </p>
             </div>
           )}
 
-          {summary.clientsFora.length > 0 && (
-            <div className="rounded-xl border border-burst-warning/40 bg-burst-warning/5 p-4">
-              <div className="text-xs uppercase tracking-widest text-burst-warning mb-2">
-                {summary.clientsFora.length} cliente(s) sem gestor atribuído no Monday
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {summary.clientsFora.slice(0, 30).map((c) => (
-                  <span
-                    key={c.id}
-                    className="text-xs px-2 py-1 rounded bg-black/30 border border-burst-border text-white/80"
-                  >
-                    {c.name}
-                  </span>
-                ))}
-                {summary.clientsFora.length > 30 && (
-                  <span className="text-xs text-burst-muted">+{summary.clientsFora.length - 30}</span>
-                )}
-              </div>
+          {/* Outros papéis */}
+          {!isAdmin(user) && user.role !== 'gestor' && (
+            <div className="rounded-2xl border border-burst-border bg-burst-card p-8 text-center">
+              <p className="text-burst-muted text-sm">
+                Esta aba mostra dados de Gestor de Tráfego. Use a aba do seu setor.
+              </p>
             </div>
-          )}
-
-          {summary.gestores.length > 0 && (
-            <section>
-              <div className="flex items-center gap-2 mb-4">
-                <Users className="text-burst-orange-bright" size={20} />
-                <h3 className="font-display text-xl tracking-wider text-white">
-                  Análise por Gestor
-                </h3>
-                <span className="text-xs text-burst-muted">
-                  {summary.gestores.length} gestor(es)
-                </span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                {summary.gestores.map((g) => (
-                  <GestorCard
-                    key={g.gestor}
-                    gestor={g}
-                    onClick={() => setSelectedGestor(g.gestor)}
-                    onClickMensagens={() =>
-                      setDrillGestor({ gestor: g.gestor, type: 'mensagens' })
-                    }
-                    onClickTransferencias={() =>
-                      setDrillGestor({ gestor: g.gestor, type: 'transferencias' })
-                    }
-                    onClickSpend={() =>
-                      setDrillGestor({ gestor: g.gestor, type: 'spend' })
-                    }
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {summary.orfaos.length > 0 && (
-            <DiagnosticoOrfaos
-              orfaos={summary.orfaos}
-              totalTransferenciasMapeadas={summary.totalTransferencias}
-              mondayClients={mondayAllClients}
-              linksByDoutor={doutorLinksByDoutor}
-              onLink={setDoutorLink}
-              onUnlink={removeDoutorLink}
-              missingTable={doutorLinksMissingTable}
-            />
-          )}
-
-          {summary.campaignsOrfas.length > 0 && (
-            <DiagnosticoCampanhasOrfas
-              campaigns={summary.campaignsOrfas}
-              mondayClients={mondayAllClients}
-              linksByAccount={linksByAccount}
-              onLink={setLink}
-              onUnlink={removeLink}
-            />
           )}
         </>
       )}
@@ -479,5 +592,29 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
         );
       })()}
     </div>
+  );
+}
+
+function ViewAsTab({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={[
+        'px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors',
+        active
+          ? 'bg-burst-orange/20 text-burst-orange-bright shadow-orange-glow-sm'
+          : 'text-burst-muted hover:text-white hover:bg-white/5',
+      ].join(' ')}
+    >
+      {label}
+    </button>
   );
 }

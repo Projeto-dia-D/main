@@ -28,6 +28,12 @@ export interface UseMondayClientsResult {
   biaTimelineByClientId: Map<string, FaseTransition[]>;
   /** Map<monday_client_id, fase_atual> — fase atual da Bia no board Bia Soft. */
   biaFaseByClientId: Map<string, string>;
+  /** email lowercase → nome do CS. Pra autenticação. */
+  csByEmail: Map<string, string>;
+  /** email lowercase → nome do Gestor. Pra autenticação. */
+  gestorByEmail: Map<string, string>;
+  /** email lowercase → nome do Responsável de programação. Pra autenticação. */
+  programadorByEmail: Map<string, string>;
   /** Lista única de responsáveis (Gabriel, Eduardo) com pelo menos 1 ativo. */
   responsaveis: string[];
   loading: boolean;
@@ -37,8 +43,8 @@ export interface UseMondayClientsResult {
 
 const REFRESH_MS = 1000 * 60 * 10; // 10 min
 const CACHE_KEY_CLIENTS = 'monday:clients:v2';
-// v10: adicionado biaTimelineByClientId (transições de Fase pra excluir Manutenção)
-const CACHE_KEY_BIA = 'monday:biaData:v10';
+// v11: adicionados csByEmail/gestorByEmail/programadorByEmail (pra auth)
+const CACHE_KEY_BIA = 'monday:biaData:v11';
 const CACHE_KEY_TIMELINE = 'monday:biaTimeline:v1';
 
 interface CachedClients {
@@ -51,6 +57,9 @@ interface CachedBia {
   responsavelByClientId: [string, string][];
   responsavelByName?: [string, string][];
   responsaveis: string[];
+  csByEmail?: [string, string][];
+  gestorByEmail?: [string, string][];
+  programadorByEmail?: [string, string][];
 }
 
 interface CachedTimeline {
@@ -92,6 +101,15 @@ export function useMondayClients(): UseMondayClientsResult {
   const [responsavelByName, setResponsavelByName] = useState<Map<string, string>>(initialRespByName);
   const [biaTimelineByClientId, setBiaTimelineByClientId] = useState<Map<string, FaseTransition[]>>(initialTimeline);
   const [biaFaseByClientId, setBiaFaseByClientId] = useState<Map<string, string>>(new Map());
+  const [csByEmail, setCsByEmail] = useState<Map<string, string>>(
+    () => new Map<string, string>(cachedBia?.value.csByEmail ?? [])
+  );
+  const [gestorByEmail, setGestorByEmail] = useState<Map<string, string>>(
+    () => new Map<string, string>(cachedBia?.value.gestorByEmail ?? [])
+  );
+  const [programadorByEmail, setProgramadorByEmail] = useState<Map<string, string>>(
+    () => new Map<string, string>(cachedBia?.value.programadorByEmail ?? [])
+  );
   const [responsaveis, setResponsaveis] = useState<string[]>(initialRespList);
   const [loading, setLoading] = useState(initialAll.length === 0);
   const [error, setError] = useState<string | null>(null);
@@ -139,6 +157,9 @@ export function useMondayClients(): UseMondayClientsResult {
         }
         setBiaTimelineByClientId(timelineByClient);
         setBiaFaseByClientId(biaData.faseByClientId);
+        setCsByEmail(biaData.csByEmail);
+        setGestorByEmail(biaData.gestorByEmail);
+        setProgramadorByEmail(biaData.programadorByEmail);
 
         setError(null);
         setLastUpdate(new Date());
@@ -150,6 +171,9 @@ export function useMondayClients(): UseMondayClientsResult {
           responsavelByClientId: Array.from(biaData.responsavelByClientId.entries()),
           responsavelByName: Array.from(biaData.responsavelByName.entries()),
           responsaveis: biaData.responsaveis,
+          csByEmail: Array.from(biaData.csByEmail.entries()),
+          gestorByEmail: Array.from(biaData.gestorByEmail.entries()),
+          programadorByEmail: Array.from(biaData.programadorByEmail.entries()),
         });
         writeCache<CachedTimeline>(CACHE_KEY_TIMELINE, {
           timeline: Array.from(timelineByClient.entries()),
@@ -179,6 +203,9 @@ export function useMondayClients(): UseMondayClientsResult {
     responsavelByName,
     biaTimelineByClientId,
     biaFaseByClientId,
+    csByEmail,
+    gestorByEmail,
+    programadorByEmail,
     responsaveis,
     loading,
     error,

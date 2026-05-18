@@ -1,10 +1,15 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { LogOut, UserCircle2 } from 'lucide-react';
 import { Sidebar, type TabKey } from './components/Sidebar';
+import { Login } from './components/Login';
 import { Programacao } from './components/tabs/Programacao';
 import { GestorTrafego } from './components/tabs/GestorTrafego';
 import { CS } from './components/tabs/CS';
 import { Design } from './components/tabs/Design';
 import { Calendario } from './components/tabs/Calendario';
+import { useMondayClients } from './hooks/useMondayClients';
+import { readCurrentUser, writeCurrentUser, type AuthUser } from './lib/auth';
+import { UserContext } from './lib/userContext';
 
 const TAB_TITLES: Record<TabKey, string> = {
   programacao: 'Programação',
@@ -13,6 +18,13 @@ const TAB_TITLES: Record<TabKey, string> = {
   gestor: 'Gestor de Tráfego',
   calendario: 'Calendário',
 };
+
+const ROLE_LABEL = {
+  admin: 'Admin',
+  cs: 'CS',
+  gestor: 'Gestor',
+  programador: 'Programador',
+} as const;
 
 export default function App() {
   const [active, setActive] = useState<TabKey>('programacao');
@@ -23,6 +35,27 @@ export default function App() {
       return false;
     }
   });
+
+  const [user, setUser] = useState<AuthUser | null>(() => readCurrentUser());
+
+  // Só carrega Monday se autenticado (pra evitar requisições no login screen)
+  const monday = useMondayClients();
+
+  // Quando emails do Monday chegam, atualiza o cache de auth (pra próxima sessão)
+  // Não bloqueia o login. Login agora tem seu próprio fetch leve.
+
+  const emailsForLogin = monday.csByEmail.size > 0 || monday.gestorByEmail.size > 0 || monday.programadorByEmail.size > 0
+    ? {
+        csByEmail: monday.csByEmail,
+        gestorByEmail: monday.gestorByEmail,
+        programadorByEmail: monday.programadorByEmail,
+      }
+    : null;
+
+  // Atualiza o usuário em localStorage sempre que ele muda
+  useEffect(() => {
+    writeCurrentUser(user);
+  }, [user]);
 
   function toggleCollapsed() {
     setCollapsed((v) => {
@@ -36,32 +69,73 @@ export default function App() {
     });
   }
 
-  return (
-    <div className="flex min-h-screen">
-      <Sidebar
-        active={active}
-        onChange={setActive}
-        collapsed={collapsed}
-        onToggleCollapsed={toggleCollapsed}
+  // Se não há usuário, mostra Login
+  if (!user) {
+    return (
+      <Login
+        preloadedEmails={emailsForLogin}
+        onAuthenticated={setUser}
       />
-      <main className="flex-1 min-w-0 flex flex-col">
-        <header className="border-b border-burst-border bg-burst-panel/60 backdrop-blur px-6 py-3 flex items-center gap-4">
-          <h1 className="font-display text-2xl text-white tracking-wider">
-            {TAB_TITLES[active]}
-          </h1>
-          <div className="ml-auto flex items-center gap-2 text-xs text-burst-muted">
-            <span className="w-2 h-2 rounded-full bg-burst-orange animate-pulse" />
-            Realtime ativo
+    );
+  }
+
+  const roleLabel = user.role
+    ? ROLE_LABEL[user.role as keyof typeof ROLE_LABEL] ?? user.role
+    : '';
+
+  function handleLogout() {
+    writeCurrentUser(null);
+    setUser(null);
+  }
+
+  return (
+    <UserContext.Provider value={user}>
+      <div className="flex min-h-screen">
+        <Sidebar
+          active={active}
+          onChange={setActive}
+          collapsed={collapsed}
+          onToggleCollapsed={toggleCollapsed}
+        />
+        <main className="flex-1 min-w-0 flex flex-col">
+          <header className="border-b border-burst-border bg-burst-panel/60 backdrop-blur px-6 py-3 flex items-center gap-4">
+            <h1 className="font-display text-2xl text-white tracking-wider">
+              {TAB_TITLES[active]}
+            </h1>
+            <div className="ml-auto flex items-center gap-3 text-xs text-burst-muted">
+              <span className="w-2 h-2 rounded-full bg-burst-orange animate-pulse" />
+              <span>Realtime ativo</span>
+              <div className="h-5 w-px bg-burst-border" />
+              <div className="flex items-center gap-2">
+                <UserCircle2 size={16} className="text-burst-orange-bright" />
+                <div className="flex flex-col">
+                  <span className="text-white text-xs font-semibold leading-none">
+                    {user.displayName ?? user.email}
+                  </span>
+                  <span className="text-[10px] text-burst-muted uppercase tracking-wider leading-tight">
+                    {roleLabel}
+                    {user.scope && user.role !== 'admin' && ` • ${user.scope}`}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={handleLogout}
+                title="Sair"
+                className="p-1.5 rounded-md text-burst-muted hover:bg-white/5 hover:text-red-400 transition-colors"
+              >
+                <LogOut size={15} />
+              </button>
+            </div>
+          </header>
+          <div className="flex-1 overflow-y-auto scrollbar-thin">
+            {active === 'programacao' && <Programacao />}
+            {active === 'design' && <Design />}
+            {active === 'cs' && <CS />}
+            {active === 'gestor' && <GestorTrafego />}
+            {active === 'calendario' && <Calendario />}
           </div>
-        </header>
-        <div className="flex-1 overflow-y-auto scrollbar-thin">
-          {active === 'programacao' && <Programacao />}
-          {active === 'design' && <Design />}
-          {active === 'cs' && <CS />}
-          {active === 'gestor' && <GestorTrafego />}
-          {active === 'calendario' && <Calendario />}
-        </div>
-      </main>
-    </div>
+        </main>
+      </div>
+    </UserContext.Provider>
   );
 }

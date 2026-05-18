@@ -20,8 +20,11 @@ import { DateRangeFilter } from '../programacao/DateRangeFilter';
 import { LeadsTable } from '../programacao/LeadsTable';
 import { TransferidosTable } from '../programacao/TransferidosTable';
 import { DoutoresTable } from '../programacao/DoutoresTable';
+import { PerfilPessoalProgramador } from '../programacao/PerfilPessoalProgramador';
 import { Modal } from '../Modal';
 import { Users, AlertTriangle, PhoneOff, FileWarning, ListChecks } from 'lucide-react';
+import { useUser, isAdmin } from '../../lib/userContext';
+import { nameMatchesScope } from '../../lib/monday';
 
 type ModalKind = 'leads' | 'transferidos' | 'doutores' | 'interrompidos' | 'incompletos' | null;
 
@@ -39,22 +42,45 @@ export function Programacao() {
   // null = mostra todos; senão filtra leads por responsável (Gabriel/Eduardo)
   const [responsavelFiltro, setResponsavelFiltro] = useState<string | null>(null);
 
+  // === FILTRO POR ROLE ===
+  const user = useUser();
+  // Programador não-admin: filtro é FIXO no scope dele (não pode trocar).
+  const enforcedResponsavel = useMemo<string | null>(() => {
+    if (isAdmin(user)) return null; // admin escolhe via tabs
+    if (user.role === 'programador' && user.scope) {
+      // Procura o responsável real que casa com o scope (Bia Soft usa nome
+      // completo; user.scope também é o completo).
+      for (const r of responsaveis) {
+        if (nameMatchesScope(user.scope, r)) return r;
+      }
+      return user.scope; // fallback
+    }
+    return null;
+  }, [user, responsaveis]);
+
+  // Override: se enforced existe, usa ele; senão usa o que o usuário escolheu
+  const effectiveResponsavel = enforcedResponsavel ?? responsavelFiltro;
+
   const filteredLeads = useMemo(() => {
     const byRange = filterByDateRange(leads, range);
-    if (!responsavelFiltro) return byRange;
-    // Filtra leads cujo doutor está atribuído ao responsável selecionado.
-    // Leads sem doutor ou cujo doutor não casa com nenhum cliente Monday são
-    // excluídos do filtro.
+    if (!effectiveResponsavel) return byRange;
     return byRange.filter((l) => {
       const r = getResponsavelForDoutor(l.nomeDoutor, responsavelByClient);
-      return r === responsavelFiltro;
+      return r === effectiveResponsavel;
     });
-  }, [leads, range, responsavelFiltro, responsavelByClient]);
+  }, [leads, range, effectiveResponsavel, responsavelByClient]);
 
   const summary = useMemo(
     () => computeMetrics(filteredLeads, range, instanceMap, mondayClients),
     [filteredLeads, range, instanceMap, mondayClients]
   );
+
+  // Summary com TODOS os leads (sem filtro por responsável) — usado pela
+  // visão pessoal pra calcular comparação vs média geral da agência.
+  const fullSummary = useMemo(() => {
+    const all = filterByDateRange(leads, range);
+    return computeMetrics(all, range, instanceMap, mondayClients);
+  }, [leads, range, instanceMap, mondayClients]);
   // ATENÇÃO: os modais e listas devem usar `summary.activeLeads`, nunca
   // `filteredLeads`. activeLeads já tirou chats interrompidos e incompletos.
   const transferidos = useMemo(
@@ -115,7 +141,9 @@ export function Programacao() {
 
   return (
     <div className="p-6 lg:p-8 flex flex-col gap-6 max-w-[1600px] mx-auto">
-      {responsaveis.length > 0 && (
+      {/* Tabs de responsável: só admin pode trocar. Programador vê os
+          próprios dados fixados (sem opção de troca). */}
+      {isAdmin(user) && responsaveis.length > 0 && (
         <div className="flex items-center gap-1.5 bg-burst-card border border-burst-border rounded-xl p-1.5 w-fit">
           <ResponsavelTab
             label="Todos"
@@ -133,6 +161,11 @@ export function Programacao() {
               />
             );
           })}
+        </div>
+      )}
+      {!isAdmin(user) && enforcedResponsavel && (
+        <div className="text-xs text-burst-muted bg-burst-card border border-burst-border rounded-xl px-4 py-2 w-fit">
+          Filtrado em <span className="text-white font-semibold">{enforcedResponsavel}</span>
         </div>
       )}
 
@@ -170,36 +203,78 @@ export function Programacao() {
         <DateRangeFilter range={range} onChange={setRange} />
       </div>
 
-      <PainelGeral
-        summary={summary}
-        lastUpdate={lastUpdate}
-        onOpenLeads={() => setOpenModal('leads')}
-        onOpenTransferidos={() => setOpenModal('transferidos')}
-        onOpenDoutores={() => setOpenModal('doutores')}
-      />
-      {summary.totalTransferidos > 0 && <TierImage tier={summary.tier} />}
-      <RankingDoutores doutores={summary.doutores} />
-      <Alertas summary={summary} />
-      <ChatsInterrompidos leads={summary.chatsInterrompidos} />
-      <ChatsIncompletos leads={summary.chatsIncompletos} />
+      {/* === VISÃO PERSONALIZADA: Programador não-admin OU admin com responsável selecionado === */}
+      {((!isAdmin(user) && user.role === 'programador' && enforcedResponsavel) ||
+        (isAdmin(user) && responsavelFiltro)) && (
+        <>
+          <PerfilPessoalProgramador
+            nomeProgramador={
+              responsavelFiltro ?? user.displayName ?? enforcedResponsavel ?? ''
+            }
+            summary={summary}
+            fullSummary={fullSummary}
+          />
+          {summary.doutores.length === 0 && (
+            <div className="rounded-2xl border border-burst-warning/40 bg-burst-warning/5 p-8 text-center">
+              <AlertTriangle className="text-burst-warning mx-auto mb-3" size={28} />
+              <div className="text-white font-display text-xl mb-2">
+                Sem doutores no período
+              </div>
+              <p className="text-sm text-burst-muted">
+                Não encontramos leads atribuídos aos seus doutores no período selecionado.
+                Ajuste o período ou veja os Chats Interrompidos/Incompletos abaixo.
+              </p>
+            </div>
+          )}
+          <ChatsInterrompidos leads={summary.chatsInterrompidos} />
+          <ChatsIncompletos leads={summary.chatsIncompletos} />
+        </>
+      )}
 
-      {summary.doutores.length > 0 && (
-      <section>
-        <div className="flex items-center gap-2 mb-4">
-          <Users className="text-burst-orange-bright" size={20} />
-          <h3 className="font-display text-xl tracking-wider text-white">
-            Análise por Doutor
-          </h3>
-          <span className="text-xs text-burst-muted">
-            {summary.doutores.length} doutor(es)
-          </span>
+      {/* === VISÃO ADMIN COMPLETA: só quando "Todos" está selecionado === */}
+      {isAdmin(user) && !responsavelFiltro && (
+        <>
+          <PainelGeral
+            summary={summary}
+            lastUpdate={lastUpdate}
+            onOpenLeads={() => setOpenModal('leads')}
+            onOpenTransferidos={() => setOpenModal('transferidos')}
+            onOpenDoutores={() => setOpenModal('doutores')}
+          />
+          {summary.totalTransferidos > 0 && <TierImage tier={summary.tier} />}
+          <RankingDoutores doutores={summary.doutores} />
+          <Alertas summary={summary} />
+          <ChatsInterrompidos leads={summary.chatsInterrompidos} />
+          <ChatsIncompletos leads={summary.chatsIncompletos} />
+
+          {summary.doutores.length > 0 && (
+            <section>
+              <div className="flex items-center gap-2 mb-4">
+                <Users className="text-burst-orange-bright" size={20} />
+                <h3 className="font-display text-xl tracking-wider text-white">
+                  Análise por Doutor
+                </h3>
+                <span className="text-xs text-burst-muted">
+                  {summary.doutores.length} doutor(es)
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                {summary.doutores.map((d) => (
+                  <DoutorCard key={d.nome} doutor={d} />
+                ))}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+
+      {/* Outros papéis (cs, gestor) — não veem a Programação detalhada */}
+      {!isAdmin(user) && user.role !== 'programador' && (
+        <div className="rounded-2xl border border-burst-border bg-burst-card p-8 text-center">
+          <p className="text-burst-muted text-sm">
+            Esta aba mostra dados de Programação. Use a aba do seu setor.
+          </p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-            {summary.doutores.map((d) => (
-              <DoutorCard key={d.nome} doutor={d} />
-            ))}
-          </div>
-      </section>
       )}
 
       <Modal
