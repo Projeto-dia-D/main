@@ -10,12 +10,13 @@ import { filterByDateRange, isTransferido, type DateRange } from '../../lib/metr
 import { computeGestorMetrics } from '../../lib/gestorMetrics';
 import { LeadsTable } from '../programacao/LeadsTable';
 import { TransferidosTable } from '../programacao/TransferidosTable';
+import { isClientChurned } from '../../lib/monday';
+import { DoutoresList } from '../gestor/DoutoresList';
 import { assertConfig, assertGestorConfig } from '../../config';
 import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
 import { Modal } from '../Modal';
 import { PainelGeralGestor } from '../gestor/PainelGeralGestor';
 import { PainelMiniGestor } from '../gestor/PainelMiniGestor';
-import { RankingGestores } from '../gestor/RankingGestores';
 import { GestorCard } from '../gestor/GestorCard';
 import { ClientesTable } from '../gestor/ClientesTable';
 import { CampanhasTable } from '../gestor/CampanhasTable';
@@ -74,9 +75,18 @@ export function GestorTrafego() {
     load: loadGestor,
   } = useAdAccountsForGestor();
 
+  // Filtra links de clientes churned — não temos mais acesso à BM deles,
+  // logo evita tentar buscar insights e gerar erro de permissão.
+  const linksParaMeta = useMemo(() => {
+    if (mondayAllClients.length === 0) return links;
+    const churnedIds = new Set<string>();
+    for (const c of mondayAllClients) if (isClientChurned(c)) churnedIds.add(c.id);
+    return links.filter((l) => !churnedIds.has(l.monday_client_id));
+  }, [links, mondayAllClients]);
+
   // useMetaSpend busca insights direto pelos links — não precisa de discovery
   const { insights, loading: metaLoading, errors: metaErrors, lastUpdate } =
-    useMetaSpend(range, links);
+    useMetaSpend(range, linksParaMeta);
 
   const filteredLeads = useMemo(
     () => filterByDateRange(leads, range),
@@ -273,8 +283,6 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
             </div>
           )}
 
-          <RankingGestores gestores={summary.gestores} />
-
           {summary.clientsFora.length > 0 && (
             <div className="rounded-xl border border-burst-warning/40 bg-burst-warning/5 p-4">
               <div className="text-xs uppercase tracking-widest text-burst-warning mb-2">
@@ -399,18 +407,18 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
         />
       </Modal>
 
-      {/* Drill-down: clica num gestor → mostra TODOS os clientes/doutores dele */}
+      {/* Drill-down: clica num gestor → mostra TODOS os doutores dele */}
       <Modal
         open={selectedGestor !== null}
         onClose={() => setSelectedGestor(null)}
-        title={selectedGestor ? `Clientes de ${selectedGestor}` : ''}
+        title={selectedGestor ? `Doutores de ${selectedGestor}` : ''}
         subtitle={(() => {
           const g = summary.gestores.find((g) => g.gestor === selectedGestor);
           if (!g) return '';
-          return `${g.clients.length} cliente(s) • ${g.totalTransferencias} transferência(s) • CPT ${g.cpt === null ? '—' : `R$ ${g.cpt.toFixed(2)}`}`;
+          return `${g.clients.length} doutor(es) • ${g.totalTransferencias} transferência(s) • CPT ${g.cpt === null ? '—' : `R$ ${g.cpt.toFixed(2)}`}`;
         })()}
       >
-        <ClientesTable
+        <DoutoresList
           clients={summary.gestores.find((g) => g.gestor === selectedGestor)?.clients ?? []}
         />
       </Modal>
@@ -452,7 +460,7 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
           <Modal
             open
             onClose={() => setDrillGestor(null)}
-            title={`Spend — ${g.gestor}`}
+            title={`Gasto — ${g.gestor}`}
             subtitle={`${campanhas.length} campanha(s) • R$ ${g.totalSpend.toFixed(2)} total`}
           >
             <CampanhasTable insights={campanhas} />

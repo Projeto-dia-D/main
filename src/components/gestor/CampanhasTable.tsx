@@ -65,7 +65,7 @@ export function CampanhasTable({ insights }: Props) {
               <th className="text-left px-3 py-2 font-semibold">Campanha</th>
               <th className="text-left px-3 py-2 font-semibold">Token</th>
               <th className="text-left px-3 py-2 font-semibold">Conta Meta</th>
-              <th className="text-right px-3 py-2 font-semibold">Spend</th>
+              <th className="text-right px-3 py-2 font-semibold">Gasto</th>
             </tr>
           </thead>
           <tbody>

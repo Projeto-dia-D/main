@@ -380,10 +380,12 @@ const BIA_RESP_COL_ID = 'person';                 // coluna "Responsável" (peop
 const BIA_CLIENT_REL_COL_ID = 'board_relation_mkzc177b'; // coluna "👥 Clientes" — link pro Monday principal
 
 // Fases que CONTAM (case-insensitive, sem acento, match por substring).
+// Manutenção REMOVIDA — clientes em manutenção não contam mais nas métricas
+// nem em CS, nem em Gestor, nem em Programação. Leads históricos ficam
+// preservados no banco (visíveis no drill-down do cliente).
 const BIA_FASES_ATIVAS = [
   'i.a ativa',  // Bia rodando em produção
   'ia ativa',   // variação sem ponto
-  'manutencao', // Manutenção (sem acento por causa do normalize)
 ];
 
 function isFaseAtiva(fase: string | null | undefined): boolean {

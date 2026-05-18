@@ -86,7 +86,7 @@ export function DiagnosticoCampanhasOrfas({
           <div className="text-xs text-burst-muted mt-0.5">
             <span className="text-burst-warning font-semibold">{campaigns.length}</span> campanha(s){' '}
             de <span className="text-burst-warning font-semibold">{groups.length}</span> conta(s) Meta{' '}
-            • spend não atribuído:{' '}
+            • gasto não atribuído:{' '}
             <span className="text-burst-warning font-semibold">{brl(totalSpend)}</span>
           </div>
         </div>

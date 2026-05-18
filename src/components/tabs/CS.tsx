@@ -12,13 +12,14 @@ import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
 import { Modal } from '../Modal';
 import { PainelGeralCs } from '../cs/PainelGeralCs';
 import { PainelMiniCs } from '../cs/PainelMiniCs';
-import { RankingCs } from '../cs/RankingCs';
 import { CsCard } from '../cs/CsCard';
 import { CsesTable } from '../cs/CsesTable';
 import { ClientesTable } from '../gestor/ClientesTable';
+import { DoutoresList } from '../gestor/DoutoresList';
 import { CampanhasTable } from '../gestor/CampanhasTable';
 import { LeadsTable } from '../programacao/LeadsTable';
 import { TransferidosTable } from '../programacao/TransferidosTable';
+import { isClientChurned } from '../../lib/monday';
 
 type ModalKind = 'clientes' | 'cses' | null;
 
@@ -59,7 +60,15 @@ export function CS() {
     return s;
   }, [links]);
 
-  const { insights, errors: metaErrors, lastUpdate } = useMetaSpend(range, links);
+  // Filtra links de clientes churned (perdemos acesso à BM deles)
+  const linksParaMeta = useMemo(() => {
+    if (mondayAllClients.length === 0) return links;
+    const churnedIds = new Set<string>();
+    for (const c of mondayAllClients) if (isClientChurned(c)) churnedIds.add(c.id);
+    return links.filter((l) => !churnedIds.has(l.monday_client_id));
+  }, [links, mondayAllClients]);
+
+  const { insights, errors: metaErrors, lastUpdate } = useMetaSpend(range, linksParaMeta);
 
   const filteredLeads = useMemo(
     () => filterByDateRange(leads, range),
@@ -192,8 +201,6 @@ export function CS() {
             </div>
           )}
 
-          <RankingCs cses={summary.cses} />
-
           {summary.clientesSemCs.length > 0 && (
             <div className="rounded-xl border border-burst-warning/40 bg-burst-warning/5 p-4">
               <div className="text-xs uppercase tracking-widest text-burst-warning mb-2">
@@ -259,18 +266,18 @@ export function CS() {
         <CsesTable cses={summary.cses} />
       </Modal>
 
-      {/* Drill-down: clica num CS → mostra TODOS os clientes dele */}
+      {/* Drill-down: clica num CS → mostra TODOS os doutores dela */}
       <Modal
         open={selectedCs !== null}
         onClose={() => setSelectedCs(null)}
-        title={selectedCs ? `Clientes de ${selectedCs}` : ''}
+        title={selectedCs ? `Doutores de ${selectedCs}` : ''}
         subtitle={(() => {
           const c = summary.cses.find((c) => c.cs === selectedCs);
           if (!c) return '';
-          return `${c.clients.length} cliente(s) • ${c.totalTransferencias} transferência(s) • CPT ${c.cpt === null ? '—' : `R$ ${c.cpt.toFixed(2)}`}`;
+          return `${c.clients.length} doutor(es) • ${c.totalTransferencias} transferência(s) • CPT ${c.cpt === null ? '—' : `R$ ${c.cpt.toFixed(2)}`}`;
         })()}
       >
-        <ClientesTable
+        <DoutoresList
           clients={summary.cses.find((c) => c.cs === selectedCs)?.clients ?? []}
         />
       </Modal>
@@ -313,7 +320,7 @@ export function CS() {
           <Modal
             open
             onClose={() => setDrillCs(null)}
-            title={`Spend — ${c.cs}`}
+            title={`Gasto — ${c.cs}`}
             subtitle={`${campanhas.length} campanha(s) • R$ ${c.totalSpend.toFixed(2)} total`}
           >
             <CampanhasTable insights={campanhas} />
