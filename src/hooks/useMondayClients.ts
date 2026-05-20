@@ -152,14 +152,38 @@ export function useMondayClients(): UseMondayClientsResult {
         const filtered = mainResult.clients.filter((c) =>
           isClientNoBiaSoftById(c, biaData.allIds)
         );
-        setAllClients(mainResult.clients);
-        setClientsAll(mainResult.clientsAll);
-        setClients(filtered);
-        setBiaActiveIds(biaData.activeIds);
-        setBiaAllIds(biaData.allIds);
-        setResponsavelByClientId(biaData.responsavelByClientId);
-        setResponsavelByName(biaData.responsavelByName);
-        setResponsaveis(biaData.responsaveis);
+
+        // === ANTI-OSCILACAO ===
+        // Se a chamada do Monday retornou success mas com payload vazio
+        // (rate limit silencioso, blip de rede, GraphQL parcial), nao wipa
+        // o estado — preserva o que ja tinha. Sem isso, qualquer refetch
+        // problematico fazia os cards "sumirem" temporariamente ate a
+        // proxima rodada bem sucedida.
+        //
+        // Guard por bloco (main vs bia) pra permitir update parcial:
+        //   - se Monday voltou OK mas Bia falhou: atualiza clients, mantem Bia
+        //   - vice-versa
+        //   - se ambos voltaram vazios E ja tinhamos dados: nao mexe em nada
+        const mainHasData = mainResult.clients.length > 0 || mainResult.clientsAll.length > 0;
+        const biaHasData = biaData.allIds.size > 0;
+
+        if (mainHasData) {
+          setAllClients(mainResult.clients);
+          setClientsAll(mainResult.clientsAll);
+          setClients(filtered);
+        } else {
+          console.warn('[useMondayClients] fetchMondayClients voltou vazio — preservando estado anterior');
+        }
+
+        if (biaHasData) {
+          setBiaActiveIds(biaData.activeIds);
+          setBiaAllIds(biaData.allIds);
+          setResponsavelByClientId(biaData.responsavelByClientId);
+          setResponsavelByName(biaData.responsavelByName);
+          setResponsaveis(biaData.responsaveis);
+        } else {
+          console.warn('[useMondayClients] fetchBiaSoftData voltou vazio — preservando estado anterior');
+        }
 
         // biaTimelineRaw vem indexado por bia_item_id (id do item no board Bia Soft).
         // Reindexa por monday_principal_client_id usando o bridge clientIdsByBiaItemId.
@@ -179,41 +203,50 @@ export function useMondayClients(): UseMondayClientsResult {
           arr.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
           timelineByClient.set(k, arr);
         }
-        setBiaTimelineByClientId(timelineByClient);
-        setBiaFaseByClientId(biaData.faseByClientId);
-        // Inverte clientIdsByBiaItemId → biaItemIdByClientId (1 client pode
-        // estar em múltiplos bia_items, raro; mantemos o primeiro).
-        const biaItemByClient = new Map<string, string>();
-        for (const [biaItemId, clientIds] of biaData.clientIdsByBiaItemId) {
-          for (const cid of clientIds) {
-            if (!biaItemByClient.has(cid)) biaItemByClient.set(cid, biaItemId);
+        // Timeline e itens derivados do Bia — so atualiza se biaHasData
+        // (senao a derivacao via clientIdsByBiaItemId fica errada).
+        if (biaHasData) {
+          setBiaTimelineByClientId(timelineByClient);
+          setBiaFaseByClientId(biaData.faseByClientId);
+          // Inverte clientIdsByBiaItemId → biaItemIdByClientId (1 client pode
+          // estar em múltiplos bia_items, raro; mantemos o primeiro).
+          const biaItemByClient = new Map<string, string>();
+          for (const [biaItemId, clientIds] of biaData.clientIdsByBiaItemId) {
+            for (const cid of clientIds) {
+              if (!biaItemByClient.has(cid)) biaItemByClient.set(cid, biaItemId);
+            }
           }
+          setBiaItemIdByClientId(biaItemByClient);
+          setCsByEmail(biaData.csByEmail);
+          setGestorByEmail(biaData.gestorByEmail);
+          setProgramadorByEmail(biaData.programadorByEmail);
         }
-        setBiaItemIdByClientId(biaItemByClient);
-        setCsByEmail(biaData.csByEmail);
-        setGestorByEmail(biaData.gestorByEmail);
-        setProgramadorByEmail(biaData.programadorByEmail);
 
         setError(null);
         setLastUpdate(new Date());
 
-        writeCache<CachedClients>(CACHE_KEY_CLIENTS, {
-          clients: mainResult.clients,
-          clientsAll: mainResult.clientsAll,
-        });
-        writeCache<CachedBia>(CACHE_KEY_BIA, {
-          allIds: Array.from(biaData.allIds),
-          activeIds: Array.from(biaData.activeIds),
-          responsavelByClientId: Array.from(biaData.responsavelByClientId.entries()),
-          responsavelByName: Array.from(biaData.responsavelByName.entries()),
-          responsaveis: biaData.responsaveis,
-          csByEmail: Array.from(biaData.csByEmail.entries()),
-          gestorByEmail: Array.from(biaData.gestorByEmail.entries()),
-          programadorByEmail: Array.from(biaData.programadorByEmail.entries()),
-        });
-        writeCache<CachedTimeline>(CACHE_KEY_TIMELINE, {
-          timeline: Array.from(timelineByClient.entries()),
-        });
+        // Cache so persiste dados validos — se voltou vazio, mantem cache antigo
+        if (mainHasData) {
+          writeCache<CachedClients>(CACHE_KEY_CLIENTS, {
+            clients: mainResult.clients,
+            clientsAll: mainResult.clientsAll,
+          });
+        }
+        if (biaHasData) {
+          writeCache<CachedBia>(CACHE_KEY_BIA, {
+            allIds: Array.from(biaData.allIds),
+            activeIds: Array.from(biaData.activeIds),
+            responsavelByClientId: Array.from(biaData.responsavelByClientId.entries()),
+            responsavelByName: Array.from(biaData.responsavelByName.entries()),
+            responsaveis: biaData.responsaveis,
+            csByEmail: Array.from(biaData.csByEmail.entries()),
+            gestorByEmail: Array.from(biaData.gestorByEmail.entries()),
+            programadorByEmail: Array.from(biaData.programadorByEmail.entries()),
+          });
+          writeCache<CachedTimeline>(CACHE_KEY_TIMELINE, {
+            timeline: Array.from(timelineByClient.entries()),
+          });
+        }
       } catch (e) {
         if (!active) return;
         setError(e instanceof Error ? e.message : String(e));
