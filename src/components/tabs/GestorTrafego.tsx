@@ -23,6 +23,7 @@ import { PainelGeralGestor } from '../gestor/PainelGeralGestor';
 import { PainelMiniGestor } from '../gestor/PainelMiniGestor';
 import { PerfilPessoalGestor } from '../gestor/PerfilPessoalGestor';
 import { ClientesTable } from '../gestor/ClientesTable';
+import { ClientesGridView } from '../gestor/ClientesGridView';
 import { CampanhasTable } from '../gestor/CampanhasTable';
 import { ClienteDrilldown } from '../gestor/ClienteDrilldown';
 import { GestoresTable } from '../gestor/GestoresTable';
@@ -678,7 +679,7 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
             subtitle={`${g.clients.length} cliente(s) no total · ${ativos} ativo(s) no período`}
             maxWidth="max-w-6xl"
           >
-            <ClientesTable
+            <ClientesGridView
               clients={g.clients}
               onClickClient={(cm) => {
                 setDrillAllClientesGestor(null);

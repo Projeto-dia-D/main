@@ -15,6 +15,7 @@ import { PainelMiniCs } from '../cs/PainelMiniCs';
 import { CsesTable } from '../cs/CsesTable';
 import { PerfilPessoalCs } from '../cs/PerfilPessoalCs';
 import { ClientesTable } from '../gestor/ClientesTable';
+import { ClientesGridView } from '../gestor/ClientesGridView';
 import { CampanhasTable } from '../gestor/CampanhasTable';
 import { ClienteDrilldown } from '../gestor/ClienteDrilldown';
 import { LeadsTable } from '../programacao/LeadsTable';
@@ -490,7 +491,7 @@ export function CS() {
             subtitle={`${c.clients.length} cliente(s) no total · ${ativos} ativo(s) no período`}
             maxWidth="max-w-6xl"
           >
-            <ClientesTable
+            <ClientesGridView
               clients={c.clients}
               onClickClient={(cm) => {
                 setDrillAllClientesCs(null);
