@@ -52,6 +52,7 @@ const DOUTORES_DESCONSIDERADOS = [
   'cassiano veieira',    // grafia alternativa no UAZAPI
   'jadson lucas',
   'simone justo',
+  'idgm',                // IDGM - Cursos (Patrick e Gabriel Machado) — desconsiderado em todos os setores
 ];
 
 // Doutores escondidos APENAS da aba Programação (continuam em Gestor/CS).
