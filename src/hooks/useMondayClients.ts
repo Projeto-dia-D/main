@@ -12,8 +12,12 @@ import { readCacheWithMeta, writeCache } from '../lib/cache';
 export interface UseMondayClientsResult {
   /** Clientes Monday que estão vinculados ao board Bia Soft (qualquer fase). */
   clients: MondayClient[];
-  /** Lista crua do board principal Monday — sem filtro. */
+  /** Clientes do Monday principal — filtrados por grupo ativo + tipo Bia Soft.
+   *  Usado em Gestor/CS/Programação. */
   allClients: MondayClient[];
+  /** TODOS os clientes do board principal SEM FILTRO — incluindo churnados,
+   *  pausados, perdidos. Usado SOMENTE pela aba Saúde do Cliente. */
+  clientsAll: MondayClient[];
   /** Set de IDs com Bia em fase ATIVA (I.A ativa). */
   biaActiveIds: Set<string>;
   /** Set de IDs de todos os clientes vinculados no Bia Soft (qualquer fase). */
@@ -28,6 +32,9 @@ export interface UseMondayClientsResult {
   biaTimelineByClientId: Map<string, FaseTransition[]>;
   /** Map<monday_client_id, fase_atual> — fase atual da Bia no board Bia Soft. */
   biaFaseByClientId: Map<string, string>;
+  /** Map<monday_client_id (do Monday principal) → bia_item_id (no board Bia Soft)>.
+   *  Usado pra montar link do item no Monday quando aparece evento de Bia. */
+  biaItemIdByClientId: Map<string, string>;
   /** email lowercase → nome do CS. Pra autenticação. */
   csByEmail: Map<string, string>;
   /** email lowercase → nome do Gestor. Pra autenticação. */
@@ -42,13 +49,18 @@ export interface UseMondayClientsResult {
 }
 
 const REFRESH_MS = 1000 * 60 * 10; // 10 min
-const CACHE_KEY_CLIENTS = 'monday:clients:v2';
+// v5: força re-fetch pra garantir dataEntrada (formula do Monday)
+//     vir preenchida — antigo cache v4 podia ter dataEntrada null se foi
+//     populado antes da coluna ser descoberta
+const CACHE_KEY_CLIENTS = 'monday:clients:v5';
 // v11: adicionados csByEmail/gestorByEmail/programadorByEmail (pra auth)
 const CACHE_KEY_BIA = 'monday:biaData:v11';
 const CACHE_KEY_TIMELINE = 'monday:biaTimeline:v1';
 
 interface CachedClients {
   clients: MondayClient[];
+  /** Inclui churn/pausados/perdidos — usado pela aba Saúde. */
+  clientsAll?: MondayClient[];
 }
 
 interface CachedBia {
@@ -83,6 +95,7 @@ export function useMondayClients(): UseMondayClientsResult {
   );
   const initialRespList = cachedBia?.value.responsaveis ?? [];
   const initialAll = cachedClients?.value.clients ?? [];
+  const initialClientsAll = cachedClients?.value.clientsAll ?? initialAll;
   const initialFiltered = initialAll.filter((c) =>
     isClientNoBiaSoftById(c, initialAllIds)
   );
@@ -95,12 +108,14 @@ export function useMondayClients(): UseMondayClientsResult {
 
   const [clients, setClients] = useState<MondayClient[]>(initialFiltered);
   const [allClients, setAllClients] = useState<MondayClient[]>(initialAll);
+  const [clientsAll, setClientsAll] = useState<MondayClient[]>(initialClientsAll);
   const [biaActiveIds, setBiaActiveIds] = useState<Set<string>>(initialActiveIds);
   const [biaAllIds, setBiaAllIds] = useState<Set<string>>(initialAllIds);
   const [responsavelByClientId, setResponsavelByClientId] = useState<Map<string, string>>(initialRespMap);
   const [responsavelByName, setResponsavelByName] = useState<Map<string, string>>(initialRespByName);
   const [biaTimelineByClientId, setBiaTimelineByClientId] = useState<Map<string, FaseTransition[]>>(initialTimeline);
   const [biaFaseByClientId, setBiaFaseByClientId] = useState<Map<string, string>>(new Map());
+  const [biaItemIdByClientId, setBiaItemIdByClientId] = useState<Map<string, string>>(new Map());
   const [csByEmail, setCsByEmail] = useState<Map<string, string>>(
     () => new Map<string, string>(cachedBia?.value.csByEmail ?? [])
   );
@@ -130,6 +145,7 @@ export function useMondayClients(): UseMondayClientsResult {
           isClientNoBiaSoftById(c, biaData.allIds)
         );
         setAllClients(mainResult.clients);
+        setClientsAll(mainResult.clientsAll);
         setClients(filtered);
         setBiaActiveIds(biaData.activeIds);
         setBiaAllIds(biaData.allIds);
@@ -157,6 +173,15 @@ export function useMondayClients(): UseMondayClientsResult {
         }
         setBiaTimelineByClientId(timelineByClient);
         setBiaFaseByClientId(biaData.faseByClientId);
+        // Inverte clientIdsByBiaItemId → biaItemIdByClientId (1 client pode
+        // estar em múltiplos bia_items, raro; mantemos o primeiro).
+        const biaItemByClient = new Map<string, string>();
+        for (const [biaItemId, clientIds] of biaData.clientIdsByBiaItemId) {
+          for (const cid of clientIds) {
+            if (!biaItemByClient.has(cid)) biaItemByClient.set(cid, biaItemId);
+          }
+        }
+        setBiaItemIdByClientId(biaItemByClient);
         setCsByEmail(biaData.csByEmail);
         setGestorByEmail(biaData.gestorByEmail);
         setProgramadorByEmail(biaData.programadorByEmail);
@@ -164,7 +189,10 @@ export function useMondayClients(): UseMondayClientsResult {
         setError(null);
         setLastUpdate(new Date());
 
-        writeCache<CachedClients>(CACHE_KEY_CLIENTS, { clients: mainResult.clients });
+        writeCache<CachedClients>(CACHE_KEY_CLIENTS, {
+          clients: mainResult.clients,
+          clientsAll: mainResult.clientsAll,
+        });
         writeCache<CachedBia>(CACHE_KEY_BIA, {
           allIds: Array.from(biaData.allIds),
           activeIds: Array.from(biaData.activeIds),
@@ -197,12 +225,14 @@ export function useMondayClients(): UseMondayClientsResult {
   return {
     clients,
     allClients,
+    clientsAll,
     biaActiveIds,
     biaAllIds,
     responsavelByClientId,
     responsavelByName,
     biaTimelineByClientId,
     biaFaseByClientId,
+    biaItemIdByClientId,
     csByEmail,
     gestorByEmail,
     programadorByEmail,

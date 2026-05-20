@@ -69,12 +69,43 @@ export function useMetaSpend(
       // Só mostra "loading" se não temos cache pra exibir
       if (!c) setLoading(true);
       try {
-        const { insights: rows, errors: errs } = await fetchInsightsForLinks(range, links, true);
+        const { insights: rows, errors: errs, failedAccountIds, succeededAccountIds } =
+          await fetchInsightsForLinks(range, links, true);
         if (!active) return;
-        setInsights(rows);
+
+        // === MERGE ANTI-OSCILAÇÃO ===
+        // Quando uma conta falha (rate limit do Meta, timeout, BM intermitente),
+        // a chamada retorna [] pra ela. Se a gente simplesmente substituísse
+        // todos os insights, o spend daquela conta SUMIRIA até o próximo
+        // refresh — causando oscilação de valores agregados (CPT, totalSpend
+        // do CS/Gestor, etc.). Os valores precisam ser PRECISOS.
+        //
+        // Estratégia: pra cada conta que falhou nesta rodada, mantém os
+        // insights da rodada anterior. Pra contas que succeeded, usa os
+        // novos. Contas que sumiram de `links` perdem seus insights também
+        // (ninguém pediu mais).
+        setInsights((prev) => {
+          if (failedAccountIds.size === 0) return rows;
+          const linkedAccountIds = new Set(links.map((l) => l.meta_account_id));
+          const stalePreserved = prev.filter(
+            (i) =>
+              failedAccountIds.has(i.accountId) &&
+              linkedAccountIds.has(i.accountId) &&
+              !succeededAccountIds.has(i.accountId)
+          );
+          const next = [...rows, ...stalePreserved];
+          // Cacheia o resultado MESCLADO (não só o que veio) — assim a
+          // próxima inicialização já vem com valores estáveis.
+          writeCache<CachedInsights>(cacheKey, { insights: next });
+          return next;
+        });
+
+        if (failedAccountIds.size === 0) {
+          // Caminho rápido: sem falhas → cacheia o que veio
+          writeCache<CachedInsights>(cacheKey, { insights: rows });
+        }
         setErrors(errs);
         setLastUpdate(new Date());
-        writeCache<CachedInsights>(cacheKey, { insights: rows });
       } catch (e) {
         if (!active) return;
         setErrors([errorMessage(e)]);

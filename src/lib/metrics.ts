@@ -19,6 +19,10 @@ const TRANSFERENCIA_PATTERNS = [
   'pode agendar',
   'agendamento',
   'encaminhamento contato',
+  // Motivos de "conversão" pra clientes de e-commerce / cursos:
+  // (o normalize() troca '_' por ' ', então usar versão com espaço)
+  'finalizar compra',
+  'matricula curso',
 ];
 
 const INTERROMPIDO_PATTERNS = [
@@ -37,6 +41,7 @@ const DOUTORES_CHAT_INCOMPLETO = [
   'vita prime',          // variação com espaço
   'vitta prime',         // grafia antiga com 2 T (mantém compat com dados existentes)
   'mayara ventura',      // aparece em Chats Incompletos, não conta em Gestor/CS
+  'clinica artis',       // Clínica Artis (Carolina Moura) — chats incompletos, fora da métrica
 ];
 
 // Doutores totalmente desconsiderados — leads NÃO aparecem em nenhuma seção
@@ -73,6 +78,13 @@ export function isTransferido(lead: RelatorioBias): boolean {
 export function isInterrompido(lead: RelatorioBias): boolean {
   const haystack = normalize(lead.motivoTransferencia);
   return INTERROMPIDO_PATTERNS.some((p) => haystack.includes(p));
+}
+
+/** Lead marcado manualmente como "desclassificado" via aba Revisar dúvidas.
+ *  Sai de TODAS as métricas (não conta como lead nem transferência). */
+export function isDesclassificado(lead: RelatorioBias): boolean {
+  const m = (lead.motivoTransferencia ?? '').trim().toLowerCase();
+  return m === 'desclassificado';
 }
 
 export function isChatIncompleto(lead: RelatorioBias): boolean {
@@ -313,7 +325,7 @@ export function computeMetrics(
     (l) => !isInterrompido(l) && isChatIncompleto(l)
   );
   let activeLeads = leadsVisiveis.filter(
-    (l) => !isInterrompido(l) && !isChatIncompleto(l)
+    (l) => !isInterrompido(l) && !isChatIncompleto(l) && !isDesclassificado(l)
   );
 
   // Aplica corte de churn por doutor.

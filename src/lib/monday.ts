@@ -50,6 +50,14 @@ const COL_DATA_CHURN_TITLES = [
   'churn date',
 ];
 
+const COL_DATA_ENTRADA_TITLES = [
+  'data de entrada',
+  'data entrada',
+  'entrou em',
+  'início do contrato',
+  'inicio do contrato',
+];
+
 // Filtros do usuário:
 const GROUP_INCLUIR_TITLES = ['clientes ativos - plano à vista', 'clientes ativos - plano a vista'];
 const TIPO_CLIENTE_INCLUIR = 'normal + bia soft';
@@ -74,6 +82,7 @@ interface ColumnValueRaw {
   text: string | null;
   type: string;
   value: string | null;
+  display_value?: string | null;   // pra FormulaValue / MirrorValue
 }
 
 interface ItemRaw {
@@ -137,7 +146,31 @@ export interface MondayClient {
   uazapiToken: string | null;
   status: string | null;
   dataChurn: string | null;   // valor cru da coluna (date column do Monday)
-  updatedAt: string | null;   // last item update timestamp
+  /** Data de entrada do cliente na agência (Monday: coluna formula "Data de
+   *  entrada"). Formato cru "DD/MM/YYYY" — use parseDataEntrada() pra Date. */
+  dataEntrada: string | null;
+  updatedAt: string | null;
+}
+
+/** Parseia "01/12/2025" (Data de entrada do Monday) pra Date.
+ *  Aceita também "1/12/2025" (sem zero à esquerda) e ISO. */
+export function parseDataEntrada(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  const trimmed = s.trim();
+  if (!trimmed) return null;
+  // DD/MM/YYYY ou D/M/YYYY (com ou sem zero à esquerda)
+  const m = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    const day = parseInt(m[1], 10);
+    const mon = parseInt(m[2], 10);
+    const year = parseInt(m[3], 10);
+    if (mon >= 1 && mon <= 12 && day >= 1 && day <= 31) {
+      return new Date(year, mon - 1, day);
+    }
+  }
+  // ISO ou outros formatos
+  const iso = new Date(trimmed);
+  return isNaN(iso.getTime()) ? null : iso;
 }
 
 async function gql<T extends { errors?: Array<{ message: string }>; error_message?: string }>(
@@ -177,7 +210,8 @@ function readColText(item: ItemRaw, colId: string | null): string | null {
   if (!colId) return null;
   const cv = item.column_values.find((v) => v.id === colId);
   if (!cv) return null;
-  return cv.text?.trim() || null;
+  // Pra FormulaValue/MirrorValue, .text vem null — usa display_value como fallback
+  return cv.text?.trim() || cv.display_value?.trim() || null;
 }
 
 const META_QUERY = `
@@ -201,7 +235,14 @@ const GROUP_ITEMS_QUERY = `
             name
             updated_at
             group { id title }
-            column_values(ids: $colIds) { id text type value }
+            column_values(ids: $colIds) {
+              id
+              text
+              type
+              value
+              ... on FormulaValue { display_value }
+              ... on MirrorValue { display_value }
+            }
           }
         }
       }
@@ -218,7 +259,14 @@ const NEXT_PAGE_QUERY = `
         name
         updated_at
         group { id title }
-        column_values { id text type value }
+        column_values {
+          id
+          text
+          type
+          value
+          ... on FormulaValue { display_value }
+          ... on MirrorValue { display_value }
+        }
       }
     }
   }
@@ -253,7 +301,12 @@ async function fetchItemsForGroup(
 }
 
 export interface FetchClientsResult {
+  /** Clientes que passam pelo filtro de grupo/tipo (ativos no Plano à vista
+   *  ou tipo "Normal + Bia Soft"). Usado pelas abas Gestor/CS/Programação. */
   clients: MondayClient[];
+  /** TODOS os clientes do board principal, INCLUINDO churnados, pausados,
+   *  perdidos etc. Usado pela aba Saúde do Cliente. */
+  clientsAll: MondayClient[];
   groupsFound: string[];
   columnsResolved: {
     tipo: string | null;
@@ -262,6 +315,7 @@ export interface FetchClientsResult {
     uazapi: string | null;
     status: string | null;
     dataChurn: string | null;
+    dataEntrada: string | null;
   };
 }
 
@@ -270,6 +324,39 @@ export function isClientChurned(client: MondayClient): boolean {
   const s = normalize(client.status);
   if (!s) return false;
   return s.includes('perdido') || s.includes('churn');
+}
+
+/**
+ * Cliente está PAUSADO se status atual ou grupo do board contém "pausa".
+ * Pausados não rodam campanhas → não precisam de vínculo Meta.
+ */
+export function isClientPausado(client: MondayClient): boolean {
+  const s = normalize(client.status);
+  const g = normalize(client.groupTitle);
+  return s.includes('pausa') || g.includes('pausa') || g.includes('aviso pr');
+}
+
+/**
+ * Cliente está em PROCESSO JURÍDICO se status/grupo contém "juridico".
+ * Esses também não rodam campanhas → não precisam de vínculo Meta.
+ */
+export function isClientJuridico(client: MondayClient): boolean {
+  const s = normalize(client.status);
+  const g = normalize(client.groupTitle);
+  return s.includes('juridico') || g.includes('juridico') || g.includes('inadimpl');
+}
+
+/**
+ * Cliente ATIVO na Burst — elegível pra vínculo Meta.
+ * Critério: NÃO é churn, NÃO é pausa, NÃO é jurídico.
+ * Esses são os doutores que rodam tráfego ativamente → todos devem ter
+ * conta Meta vinculada.
+ */
+export function isClientElegivelMeta(client: MondayClient): boolean {
+  if (isClientChurned(client)) return false;
+  if (isClientPausado(client)) return false;
+  if (isClientJuridico(client)) return false;
+  return true;
 }
 
 // Data de corte: leads/transferências/mensagens APÓS essa data não contam.
@@ -303,7 +390,8 @@ export async function fetchMondayClients(): Promise<FetchClientsResult> {
   const colUazapi = findColumnId(board.columns, COL_UAZAPI_TITLES);
   const colStatus = findColumnId(board.columns, COL_STATUS_TITLES);
   const colDataChurn = findColumnId(board.columns, COL_DATA_CHURN_TITLES);
-  const colIds = [colTipo, colCs, colGestor, colUazapi, colStatus, colDataChurn].filter(
+  const colDataEntrada = findColumnId(board.columns, COL_DATA_ENTRADA_TITLES);
+  const colIds = [colTipo, colCs, colGestor, colUazapi, colStatus, colDataChurn, colDataEntrada].filter(
     (x): x is string => Boolean(x)
   );
 
@@ -326,6 +414,7 @@ export async function fetchMondayClients(): Promise<FetchClientsResult> {
   );
 
   const clients: MondayClient[] = [];
+  const clientsAll: MondayClient[] = [];
   const seen = new Set<string>();
   for (const item of allItems) {
     if (seen.has(item.id)) continue;
@@ -336,9 +425,7 @@ export async function fetchMondayClients(): Promise<FetchClientsResult> {
     const inGroup = groupsIncluir.has(item.group.id);
     const tipoMatches = tipoNorm === TIPO_CLIENTE_INCLUIR;
 
-    if (!inGroup && !tipoMatches) continue;
-
-    clients.push({
+    const monClient: MondayClient = {
       id: item.id,
       name: item.name.trim(),
       groupTitle: item.group.title,
@@ -348,12 +435,18 @@ export async function fetchMondayClients(): Promise<FetchClientsResult> {
       uazapiToken: readColText(item, colUazapi),
       status: readColText(item, colStatus),
       dataChurn: readColText(item, colDataChurn),
+      dataEntrada: readColText(item, colDataEntrada),
       updatedAt: item.updated_at ?? null,
-    });
+    };
+    // SEMPRE adiciona em clientsAll (todos os grupos)
+    clientsAll.push(monClient);
+    // Em `clients` (filtrado) só entra se passar pelo filtro
+    if (inGroup || tipoMatches) clients.push(monClient);
   }
 
   return {
     clients,
+    clientsAll,
     groupsFound: Array.from(groupTitles),
     columnsResolved: {
       tipo: colTipo,
@@ -362,6 +455,7 @@ export async function fetchMondayClients(): Promise<FetchClientsResult> {
       uazapi: colUazapi,
       status: colStatus,
       dataChurn: colDataChurn,
+      dataEntrada: colDataEntrada,
     },
   };
 }
@@ -1172,6 +1266,372 @@ export function isClientNoBiaSoftById(
   return biaIds.has(client.id);
 }
 
+// ============================================================================
+// ACTIVITY LOGS — eventos ricos pra timeline (Status da Tarefa, Status do
+// Designer etc). Tudo isso é READ-ONLY (regra crítica do projeto: NUNCA
+// escrever no Monday — apenas consumir dados).
+// ============================================================================
+
+/**
+ * Títulos canônicos das colunas que viram eventos na timeline.
+ * Descobrimos os IDs dinamicamente por board via META_QUERY.
+ */
+export const TIMELINE_COL_TITLES = {
+  statusTarefa: ['status da tarefa', 'status tarefa'],
+  statusDesigner: ['status do designer', 'status designer'],
+  statusPrincipal: ['status principal'],
+  statusIndividual: ['status individual'],
+};
+
+/**
+ * Lista TODOS os boards do workspace (id + name). Usado pra descoberta
+ * automática de boards específicos (ex: "Otimização Clientes").
+ */
+export async function fetchAllBoards(): Promise<Array<{ id: string; name: string }>> {
+  if (!config.MONDAY_TOKEN) return [];
+  interface BoardsListResp {
+    data?: { boards?: Array<{ id: string; name: string }> };
+    errors?: Array<{ message: string }>;
+    error_message?: string;
+  }
+  try {
+    // Paginação manual (Monday tem ~centenas de boards)
+    const out: Array<{ id: string; name: string }> = [];
+    let page = 1;
+    while (page < 50) {
+      const resp = await gql<BoardsListResp>(
+        `query ($limit: Int!, $page: Int!) {
+          boards(limit: $limit, page: $page, state: active) { id name }
+        }`,
+        { limit: 100, page }
+      );
+      const list = resp.data?.boards ?? [];
+      if (list.length === 0) break;
+      out.push(...list);
+      if (list.length < 100) break;
+      page++;
+    }
+    return out;
+  } catch (e) {
+    console.warn('[Monday] fetchAllBoards falhou:', e);
+    return [];
+  }
+}
+
+/**
+ * Acha o boardId cujo nome bate (case+accent-insensitive) com algum dos
+ * termos passados. Útil pra descobrir boards específicos sem hardcode.
+ */
+export async function findBoardIdByName(termos: string[]): Promise<{ id: string; name: string } | null> {
+  const boards = await fetchAllBoards();
+  const normTermos = termos.map(normalize);
+  for (const b of boards) {
+    const n = normalize(b.name);
+    if (normTermos.some((t) => n === t)) return b;
+  }
+  // Fallback: substring
+  for (const b of boards) {
+    const n = normalize(b.name);
+    if (normTermos.some((t) => n.includes(t))) return b;
+  }
+  return null;
+}
+
+/**
+ * Descobre os IDs das colunas relevantes pra timeline num board.
+ * Retorna `{ statusTarefa, statusDesigner, statusPrincipal, statusIndividual }`
+ * (cada um pode ser null se a coluna não existir no board).
+ */
+export async function discoverBoardTimelineCols(
+  boardId: string
+): Promise<{
+  statusTarefa: string | null;
+  statusDesigner: string | null;
+  statusPrincipal: string | null;
+  statusIndividual: string | null;
+}> {
+  const empty = {
+    statusTarefa: null,
+    statusDesigner: null,
+    statusPrincipal: null,
+    statusIndividual: null,
+  };
+  if (!config.MONDAY_TOKEN) return empty;
+  try {
+    const meta = await gql<MetaResp>(META_QUERY, { boardId });
+    const board = meta.data?.boards?.[0];
+    if (!board) return empty;
+    return {
+      statusTarefa: findColumnId(board.columns, TIMELINE_COL_TITLES.statusTarefa),
+      statusDesigner: findColumnId(board.columns, TIMELINE_COL_TITLES.statusDesigner),
+      statusPrincipal: findColumnId(board.columns, TIMELINE_COL_TITLES.statusPrincipal),
+      statusIndividual: findColumnId(board.columns, TIMELINE_COL_TITLES.statusIndividual),
+    };
+  } catch (e) {
+    console.warn(`[Monday] discoverBoardTimelineCols board ${boardId}:`, e);
+    return empty;
+  }
+}
+
+export interface BoardActivityEvent {
+  /** ID do log no Monday (chave única, pra dedupe entre runs). */
+  logId: string;
+  /** ID do board onde o evento aconteceu. */
+  boardId: string;
+  /** ID do item (a demanda em si). */
+  pulseId: string;
+  /** Nome do item (snapshot no momento do evento). */
+  pulseName: string;
+  /** ID da coluna que mudou. */
+  columnId: string;
+  /** Label anterior (texto do status antes da mudança). */
+  prev: string | null;
+  /** Label novo (texto do status após a mudança). */
+  next: string | null;
+  /** ISO timestamp UTC quando o evento aconteceu. */
+  ts: string;
+  /** ID do user que disparou a mudança (quando o Monday loga). */
+  userId: string | null;
+}
+
+interface BoardActivityRaw {
+  id: string;
+  event: string;
+  data: string;
+  created_at: string;
+  user_id?: string | number | null;
+}
+
+interface BoardActivityResp {
+  data?: {
+    boards?: Array<{
+      activity_logs: BoardActivityRaw[];
+    }>;
+  };
+  errors?: Array<{ message: string }>;
+  error_message?: string;
+}
+
+const BOARD_ACTIVITY_QUERY = `
+  query ($boardId: ID!, $limit: Int!, $page: Int!, $colIds: [String!], $from: ISO8601DateTime!) {
+    boards(ids: [$boardId]) {
+      activity_logs(
+        limit: $limit
+        page: $page
+        column_ids: $colIds
+        from: $from
+      ) {
+        id
+        event
+        data
+        created_at
+        user_id
+      }
+    }
+  }
+`;
+
+/**
+ * Converte o created_at do Monday (string com 100-ns ticks) em ISO UTC.
+ */
+function mondayActivityTsToIso(createdAt: string): string | null {
+  const n = Number(createdAt);
+  if (!Number.isFinite(n)) return null;
+  // > 1e16 = 100-ns ticks; > 1e13 = microsegundos; > 1e10 = ms; senão segundos
+  let ms: number;
+  if (n > 1e16) ms = Math.floor(n / 10_000);
+  else if (n > 1e13) ms = Math.floor(n / 1_000);
+  else if (n > 1e10) ms = n;
+  else ms = n * 1000;
+  const d = new Date(ms);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+interface ParsedActivityLog {
+  pulseId: string;
+  pulseName: string;
+  columnId: string;
+  prev: string | null;
+  next: string | null;
+}
+
+function parseBoardActivityData(raw: BoardActivityRaw): ParsedActivityLog | null {
+  try {
+    const d = JSON.parse(raw.data) as {
+      pulse_id?: number | string;
+      pulse_name?: string;
+      column_id?: string;
+      previous_value?: { label?: { text?: string } } | null;
+      value?: { label?: { text?: string } } | null;
+    };
+    const pulseId = d.pulse_id != null ? String(d.pulse_id) : '';
+    if (!pulseId) return null;
+    return {
+      pulseId,
+      pulseName: d.pulse_name ?? '',
+      columnId: d.column_id ?? '',
+      prev: d.previous_value?.label?.text ?? null,
+      next: d.value?.label?.text ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Busca activity_logs de UM board, filtrando por colunas e período.
+ *
+ * @param boardId board do Monday
+ * @param colIds coluna(s) cujas mudanças interessam (ex: status_da_tarefa, status_designer)
+ * @param sinceDays quantos dias atrás (default 180)
+ */
+export async function fetchBoardActivityLogs(
+  boardId: string,
+  colIds: string[],
+  sinceDays: number = 180
+): Promise<BoardActivityEvent[]> {
+  const events: BoardActivityEvent[] = [];
+  if (!config.MONDAY_TOKEN || colIds.length === 0) return events;
+
+  const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000);
+  const fromIso = since.toISOString();
+
+  let page = 1;
+  // safety: até 100 páginas × 500 logs = 50k eventos por board
+  while (page < 100) {
+    try {
+      const resp = await gql<BoardActivityResp>(BOARD_ACTIVITY_QUERY, {
+        boardId,
+        limit: 500,
+        page,
+        colIds,
+        from: fromIso,
+      });
+      const logs = resp.data?.boards?.[0]?.activity_logs ?? [];
+      if (logs.length === 0) break;
+      for (const raw of logs) {
+        const parsed = parseBoardActivityData(raw);
+        if (!parsed) continue;
+        const ts = mondayActivityTsToIso(raw.created_at);
+        if (!ts) continue;
+        events.push({
+          logId: raw.id,
+          boardId,
+          pulseId: parsed.pulseId,
+          pulseName: parsed.pulseName,
+          columnId: parsed.columnId,
+          prev: parsed.prev,
+          next: parsed.next,
+          ts,
+          userId: raw.user_id != null ? String(raw.user_id) : null,
+        });
+      }
+      if (logs.length < 500) break;
+      page++;
+    } catch (e) {
+      console.warn(`[Monday] activity_logs board ${boardId} page ${page}:`, e);
+      break;
+    }
+  }
+  return events;
+}
+
+/**
+ * Busca activity_logs de VÁRIOS boards em paralelo.
+ * Recebe Map<boardId, colIds[]> e retorna lista única consolidada.
+ */
+export async function fetchMultiBoardActivityLogs(
+  boards: Array<{ boardId: string; colIds: string[]; label?: string }>,
+  sinceDays: number = 180
+): Promise<BoardActivityEvent[]> {
+  const all = await Promise.all(
+    boards.map((b) => fetchBoardActivityLogs(b.boardId, b.colIds, sinceDays))
+  );
+  return all.flat().sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+}
+
+/**
+ * Busca a DATA DE CRIAÇÃO de itens em um board. Usado pra mostrar quando uma
+ * demanda foi criada na timeline. Retorna Map<pulseId, ISO_created_at>.
+ *
+ * Limita a `lookbackDays` itens criados nesse período pra não puxar histórico
+ * antigo desnecessariamente.
+ */
+export async function fetchBoardItemsCreatedAt(
+  boardId: string,
+  lookbackDays: number = 180
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!config.MONDAY_TOKEN) return out;
+
+  const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+  const sinceIso = since.toISOString();
+
+  const QUERY = `
+    query ($boardId: ID!, $limit: Int!) {
+      boards(ids: [$boardId]) {
+        items_page(limit: $limit, query_params: { rules: [
+          { column_id: "__creation_log__", compare_value: ["EXACT", "${sinceIso}"], operator: greater_than }
+        ] }) {
+          cursor
+          items { id created_at }
+        }
+      }
+    }
+  `;
+  // A query acima pode falhar dependendo da versão da API. Vamos fazer
+  // simples: paginar items e pegar created_at de cada um, sem filtro.
+  const SIMPLE_QUERY = `
+    query ($boardId: ID!, $limit: Int!) {
+      boards(ids: [$boardId]) {
+        items_page(limit: $limit) {
+          cursor
+          items { id created_at }
+        }
+      }
+    }
+  `;
+  const NEXT_QUERY = `
+    query ($cursor: String!, $limit: Int!) {
+      next_items_page(cursor: $cursor, limit: $limit) {
+        cursor
+        items { id created_at }
+      }
+    }
+  `;
+
+  interface ItemMin { id: string; created_at: string | null }
+  interface ListResp { data?: { boards?: Array<{ items_page: { cursor: string | null; items: ItemMin[] } }> }; errors?: Array<{ message: string }>; error_message?: string }
+  interface NextResp { data?: { next_items_page: { cursor: string | null; items: ItemMin[] } }; errors?: Array<{ message: string }>; error_message?: string }
+
+  try {
+    // Usa simple query (paginate all items, filter por created_at no client)
+    const first = await gql<ListResp>(SIMPLE_QUERY, { boardId, limit: PAGE_LIMIT });
+    const page = first.data?.boards?.[0]?.items_page;
+    if (!page) return out;
+    const items: ItemMin[] = [...page.items];
+    let cursor = page.cursor;
+    while (cursor) {
+      const next = await gql<NextResp>(NEXT_QUERY, { cursor, limit: PAGE_LIMIT });
+      const np = next.data?.next_items_page;
+      if (!np) break;
+      items.push(...np.items);
+      cursor = np.cursor;
+    }
+    for (const it of items) {
+      if (it.created_at) {
+        const d = new Date(it.created_at);
+        if (!isNaN(d.getTime()) && d.getTime() >= since.getTime()) {
+          out.set(it.id, it.created_at);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn(`[Monday] fetchBoardItemsCreatedAt board ${boardId}:`, e);
+  }
+  return out;
+}
+
 /** @deprecated Use isClientNoBiaSoftById — match por nome era frágil. */
 export function isClientNoBiaSoft(
   client: MondayClient,
@@ -1185,4 +1645,185 @@ export function isClientNoBiaSoft(
     if (namesMatchByWords(n, bn)) return true;
   }
   return false;
+}
+
+// ============================================================================
+// Design boards — board_relation "👥 Clientes" → monday_client_id[]
+//
+// Cada item nas boards de Design (Central, Demandas Feitas, Manutenções,
+// Atrasos, backups) tem uma coluna "Clientes" (board_relation) que aponta
+// pro item correspondente no board principal de clientes. Usamos isso pra
+// casar demandas/atrasos com clientes 100% por ID — sem fuzzy match no
+// nome.
+//
+// Retorna Map<monday_item_id (da demanda), monday_client_id[] (no board principal)>.
+// ============================================================================
+
+/** IDs das boards do Design que vamos consultar. Cada uma tem a sua própria
+ *  coluna board_relation "Clientes" — o ID da coluna não é o mesmo entre
+ *  boards, então descobrimos dinamicamente via metadata. */
+const DESIGN_BOARDS = [
+  '3519879202',   // Central de Design (FEITO ativo via webhook)
+  '6900515649',   // Demandas feitas pelo Design (ativas)
+  '6791838447',   // Manutenções do Design
+  '6713230292',   // ⌚ Atrasos do Design
+  '6900586110',   // Backup Demandas feitas (arquivado)
+  '18412400257',  // Demandas 2024-2026 (arquivado)
+];
+
+const DESIGN_CLIENTES_REL_TITLES = [
+  'clientes',
+  '👥 clientes',
+  'cliente',
+  'cliente vinculado',
+  'cliente do projeto',
+];
+
+const DESIGN_REL_LIST_QUERY = `
+  query ($boardId: ID!, $limit: Int!, $colIds: [String!]) {
+    boards(ids: [$boardId]) {
+      items_page(limit: $limit) {
+        cursor
+        items {
+          id
+          column_values(ids: $colIds) {
+            id
+            ... on BoardRelationValue { linked_item_ids }
+          }
+        }
+      }
+    }
+  }
+`;
+
+const DESIGN_REL_NEXT_QUERY = `
+  query ($cursor: String!, $limit: Int!) {
+    next_items_page(cursor: $cursor, limit: $limit) {
+      cursor
+      items {
+        id
+        column_values {
+          id
+          ... on BoardRelationValue { linked_item_ids }
+        }
+      }
+    }
+  }
+`;
+
+interface DesignRelItem {
+  id: string;
+  column_values: Array<{ id: string; linked_item_ids?: string[] }>;
+}
+
+interface DesignRelListResp {
+  data?: { boards?: Array<{ items_page: { cursor: string | null; items: DesignRelItem[] } }> };
+  errors?: Array<{ message: string }>;
+  error_message?: string;
+}
+
+interface DesignRelNextResp {
+  data?: { next_items_page: { cursor: string | null; items: DesignRelItem[] } };
+  errors?: Array<{ message: string }>;
+  error_message?: string;
+}
+
+/**
+ * Resultado da consulta dos board_relations das boards de Design.
+ * Map<monday_item_id (da demanda), Set<monday_client_id (do board principal)>>.
+ *
+ * Usa Set para que o mesmo item aparecendo em múltiplos boards (ex: backup +
+ * ativo) só conte cada cliente uma vez. As funções de match no clienteSaude
+ * convertem pra array quando precisam iterar.
+ */
+export type DesignClientLinks = Map<string, Set<string>>;
+
+/**
+ * Busca os board_relation "Clientes" de TODAS as boards do Design.
+ * Roda 6 queries em paralelo (uma por board) e mescla os resultados.
+ *
+ * IMPORTANTE: aceita boards que falhem (logam warn e continuam). Boards
+ * arquivadas podem retornar erro de permissão — tudo bem, ignoramos.
+ *
+ * Estratégia de fetch:
+ *   1. META_QUERY no board → descobre o ID da coluna board_relation "Clientes"
+ *   2. DESIGN_REL_LIST_QUERY no board com essa coluna → pagina via cursor
+ *   3. Pra cada item, lê `linked_item_ids` (lista de monday_client_id)
+ *   4. Mescla tudo num único Map<monday_item_id, Set<monday_client_id>>
+ */
+export async function fetchDesignClientLinks(): Promise<DesignClientLinks> {
+  const result: DesignClientLinks = new Map();
+  if (!config.MONDAY_TOKEN) return result;
+
+  async function fetchBoard(boardId: string): Promise<void> {
+    try {
+      // 1. Metadata pra achar a coluna board_relation "Clientes"
+      const meta = await gql<MetaResp>(META_QUERY, { boardId });
+      const board = meta.data?.boards?.[0];
+      if (!board) return;
+      // Procura coluna do tipo board_relation com título matching "clientes"
+      let relColId: string | null = null;
+      for (const c of board.columns) {
+        const t = normalize(c.title);
+        if (c.type !== 'board_relation') continue;
+        if (DESIGN_CLIENTES_REL_TITLES.some((needle) => t === normalize(needle))) {
+          relColId = c.id;
+          break;
+        }
+      }
+      // Fallback: qualquer board_relation cujo título inclua "cliente"
+      if (!relColId) {
+        for (const c of board.columns) {
+          const t = normalize(c.title);
+          if (c.type !== 'board_relation') continue;
+          if (t.includes('cliente')) {
+            relColId = c.id;
+            break;
+          }
+        }
+      }
+      if (!relColId) {
+        console.warn(`[Monday] board ${boardId} não tem coluna board_relation "Clientes"`);
+        return;
+      }
+
+      // 2. Pagina os items, lendo só essa coluna
+      const first = await gql<DesignRelListResp>(DESIGN_REL_LIST_QUERY, {
+        boardId,
+        limit: PAGE_LIMIT,
+        colIds: [relColId],
+      });
+      const items: DesignRelItem[] = [];
+      const page = first.data?.boards?.[0]?.items_page;
+      if (page) {
+        items.push(...page.items);
+        let cursor = page.cursor;
+        while (cursor) {
+          const next = await gql<DesignRelNextResp>(DESIGN_REL_NEXT_QUERY, {
+            cursor,
+            limit: PAGE_LIMIT,
+          });
+          const np = next.data?.next_items_page;
+          if (!np) break;
+          items.push(...np.items);
+          cursor = np.cursor;
+        }
+      }
+
+      // 3. Indexa
+      for (const it of items) {
+        const cv = it.column_values.find((c) => c.id === relColId);
+        const ids = cv?.linked_item_ids ?? [];
+        if (ids.length === 0) continue;
+        const set = result.get(it.id) ?? new Set<string>();
+        for (const cid of ids) set.add(cid);
+        result.set(it.id, set);
+      }
+    } catch (e) {
+      console.warn(`[Monday] falha ao buscar board ${boardId}:`, e);
+    }
+  }
+
+  await Promise.all(DESIGN_BOARDS.map((b) => fetchBoard(b)));
+  return result;
 }

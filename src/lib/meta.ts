@@ -65,13 +65,30 @@ export interface MetaFetchRange {
   end: Date | null;
 }
 
-function getGestorConfig(gestor: string): MetaAccount {
-  const acc = config.META_ACCOUNTS.find(
-    (a) => a.gestor.toLowerCase() === gestor.toLowerCase()
-  );
+/** Remove acentos e baixa caixa pra comparações robustas. */
+function normalizeName(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+export function getGestorConfig(gestor: string): MetaAccount {
+  const target = normalizeName(gestor);
+  const acc = config.META_ACCOUNTS.find((a) => normalizeName(a.gestor) === target);
   if (!acc) throw new Error(`Gestor "${gestor}" não está configurado no .env`);
   if (!acc.token) throw new Error(`Token do gestor "${gestor}" vazio no .env`);
   return acc;
+}
+
+/**
+ * Retorna TODAS as contas configuradas que tem token. Usado pra fallback:
+ * quando o gestor vinculado não tem token (ou nem é um dos 3 do .env),
+ * tentamos puxar spend usando cada token disponível.
+ */
+export function getAllConfiguredAccounts(): MetaAccount[] {
+  return config.META_ACCOUNTS.filter((a) => a.token);
 }
 
 /**
@@ -237,6 +254,14 @@ export interface LinkForInsights {
 export interface FetchInsightsResult {
   insights: CampaignInsight[];
   errors: string[];
+  /** IDs (act_XXX) das contas Meta que **falharam nesta chamada** — seja
+   *  por rate limit, timeout, BM desconectada, etc. Permite ao consumidor
+   *  preservar os insights anteriores dessas contas em vez de substituir
+   *  por array vazio (que causaria oscilação de valores entre refreshes). */
+  failedAccountIds: Set<string>;
+  /** IDs (act_XXX) das contas Meta que foram CONSULTADAS (sem erro).
+   *  Usado pra saber quais contas têm insights "frescos" nesta chamada. */
+  succeededAccountIds: Set<string>;
 }
 
 /**
@@ -253,8 +278,9 @@ export async function fetchInsightsForLinks(
 ): Promise<FetchInsightsResult> {
   const errors: string[] = [];
   const allInsights: CampaignInsight[] = [];
+  const failedAccountIds = new Set<string>();
+  const succeededAccountIds = new Set<string>();
 
-  // Agrupa por gestor pra controlar concorrência por token (rate limit por app)
   const byGestor = new Map<string, LinkForInsights[]>();
   for (const l of links) {
     if (!l.gestor || !l.meta_account_id) continue;
@@ -270,6 +296,8 @@ export async function fetchInsightsForLinks(
         acc = getGestorConfig(gestor);
       } catch (e) {
         errors.push(errorMessage(e));
+        // Sem token do gestor → todas as contas dele falharam
+        for (const l of gestorLinks) failedAccountIds.add(l.meta_account_id);
         return;
       }
 
@@ -278,15 +306,20 @@ export async function fetchInsightsForLinks(
         name: l.meta_account_name ?? l.meta_account_id,
       }));
 
-      const results = await mapWithConcurrency(targets, 5, (ad) =>
-        fetchInsightsForAdAccount(acc, ad, range, daily).catch((e) => {
+      const results = await mapWithConcurrency(targets, 5, async (ad) => {
+        try {
+          const rows = await fetchInsightsForAdAccount(acc, ad, range, daily);
+          succeededAccountIds.add(ad.id);
+          return rows;
+        } catch (e) {
           errors.push(errorMessage(e));
+          failedAccountIds.add(ad.id);
           return [] as CampaignInsight[];
-        })
-      );
+        }
+      });
       for (const rows of results) allInsights.push(...rows);
     })
   );
 
-  return { insights: allInsights, errors };
+  return { insights: allInsights, errors, failedAccountIds, succeededAccountIds };
 }

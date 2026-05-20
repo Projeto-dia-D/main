@@ -5,7 +5,9 @@ import { assertConfig } from '../config';
 import { isPhoneBlocked } from '../lib/blockedPhones';
 import { readCacheWithMeta, writeCache } from '../lib/cache';
 
-const POLL_MS = 3000;
+// Polling de safety-net — realtime cobre a maioria das mudanças. 60s evita
+// re-fetch desnecessário (que disparava re-computação pesada em CS/Gestor).
+const POLL_MS = 60_000;
 const PAGE_SIZE = 1000;
 const CACHE_KEY = 'leads:v1';
 
@@ -97,7 +99,16 @@ export function useLeads(): UseLeadsResult {
           deleteBlockedInBackground(blockedIds);
         }
 
-        setLeads(cleanRows);
+        // Skip re-set quando lista é exatamente igual (evita re-render +
+        // re-computação pesada nas tabs CS/Gestor a cada polling).
+        setLeads((prev) => {
+          if (prev.length === cleanRows.length && prev.length > 0) {
+            const firstSame = prev[0]?.id === cleanRows[0]?.id;
+            const lastSame = prev[prev.length - 1]?.id === cleanRows[cleanRows.length - 1]?.id;
+            if (firstSame && lastSame) return prev; // mesma lista → mantém ref
+          }
+          return cleanRows;
+        });
         setLastUpdate(new Date());
         setError(null);
         // Persiste em localStorage para próximas aberturas
