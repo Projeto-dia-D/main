@@ -1,11 +1,10 @@
 import { useMemo } from 'react';
-import { TrendingDown, DollarSign, ArrowDownRight, MessageCircle, Trophy, AlertTriangle } from 'lucide-react';
+import { TrendingDown, DollarSign, ArrowDownRight, MessageCircle, Trophy, AlertTriangle, Users, ChevronRight } from 'lucide-react';
 import { AnimatedNumber } from '../AnimatedNumber';
 import { tierColorCpt, tierLabelCpt, progressToNextTierCpt, brl, type ClientMetrics } from '../../lib/gestorMetrics';
 import type { CsMetrics } from '../../lib/csMetrics';
 import { Avatar } from '../Avatar';
 import { useUserPhotos } from '../../hooks/useUserPhotos';
-import { ClientesMiniList as ClientesFullList } from '../gestor/ClientesMiniList';
 
 interface Props {
   cs: CsMetrics;
@@ -13,6 +12,9 @@ interface Props {
   onClickTransferencias?: () => void;
   onClickSpend?: () => void;
   onClickCliente?: (cm: ClientMetrics) => void;
+  /** Callback chamado quando o usuario clica em qualquer area "morta" do card
+   *  (fora dos botoes internos). Abre o popup com a lista completa de clientes. */
+  onClickCard?: () => void;
 }
 
 export function PainelMiniCs({
@@ -21,19 +23,26 @@ export function PainelMiniCs({
   onClickTransferencias,
   onClickSpend,
   onClickCliente,
+  onClickCard,
 }: Props) {
   const colors = tierColorCpt(cs.tier);
   const prog = progressToNextTierCpt(cs.cpt);
   const { lookup: lookupPhoto } = useUserPhotos();
   const photoUrl = lookupPhoto(cs.cs);
   const { melhores, piores } = useMemo(() => rankClients(cs.clients), [cs.clients]);
+  const ativosCount = useMemo(() => cs.clients.filter((c) => !c.inactive).length, [cs.clients]);
 
   return (
     <section
+      onClick={onClickCard}
+      role={onClickCard ? 'button' : undefined}
+      tabIndex={onClickCard ? 0 : undefined}
+      onKeyDown={onClickCard ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClickCard(); } } : undefined}
       className={[
         'rounded-2xl border bg-burst-card p-5 relative overflow-hidden animate-slide-up transition-all hover:translate-y-[-2px]',
         colors.border,
         colors.glow,
+        onClickCard ? 'cursor-pointer hover:border-burst-orange/60 focus:outline-none focus:ring-2 focus:ring-burst-orange/40' : '',
       ].join(' ')}
     >
       <div className="absolute -top-16 -right-16 w-40 h-40 rounded-full bg-burst-orange/5 blur-3xl pointer-events-none" />
@@ -95,7 +104,18 @@ export function PainelMiniCs({
         </div>
       )}
 
-      <ClientesFullList clients={cs.clients} onClickCliente={onClickCliente} />
+      {onClickCard && cs.clients.length > 0 && (
+        <div className="flex items-center justify-center gap-1.5 text-[10px] uppercase tracking-widest text-burst-muted pt-2.5 border-t border-burst-border/50">
+          <Users size={11} />
+          <span>
+            Ver todos os <span className="text-white font-semibold">{cs.clients.length}</span> clientes
+            {ativosCount !== cs.clients.length && (
+              <span className="text-burst-muted/70"> ({ativosCount} ativos)</span>
+            )}
+          </span>
+          <ChevronRight size={11} />
+        </div>
+      )}
     </section>
   );
 }

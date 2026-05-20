@@ -49,6 +49,8 @@ export function GestorTrafego() {
   const [viewAsGestor, setViewAsGestor] = useState<string | null>(null);
   // Drill em UM cliente específico
   const [drillClient, setDrillClient] = useState<{ clientId: string; gestorNome: string } | null>(null);
+  // Drill em TODOS os clientes de UM gestor (abre popup grande com a lista)
+  const [drillAllClientesGestor, setDrillAllClientesGestor] = useState<string | null>(null);
   const { lookup: lookupPhoto } = useUserPhotos();
   const { report: reportNotification, resolve: resolveNotification } = useNotifications();
 
@@ -460,6 +462,7 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
                       onClickTransferencias={() => setDrillGestor({ gestor: g.gestor, type: 'transferencias' })}
                       onClickSpend={() => setDrillGestor({ gestor: g.gestor, type: 'spend' })}
                       onClickCliente={(cm) => setDrillClient({ clientId: cm.client.id, gestorNome: g.gestor })}
+                      onClickCard={() => setDrillAllClientesGestor(g.gestor)}
                     />
                   ))}
                 </div>
@@ -657,6 +660,31 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
             maxWidth="max-w-5xl"
           >
             <ClienteDrilldown cm={cm} />
+          </Modal>
+        );
+      })()}
+
+      {/* Drill-down de TODOS os clientes de um gestor (popup grande) */}
+      {(() => {
+        if (!drillAllClientesGestor) return null;
+        const g = summary.gestores.find((x) => x.gestor === drillAllClientesGestor);
+        if (!g) return null;
+        const ativos = g.clients.filter((c) => !c.inactive).length;
+        return (
+          <Modal
+            open
+            onClose={() => setDrillAllClientesGestor(null)}
+            title={`Clientes — ${g.gestor}`}
+            subtitle={`${g.clients.length} cliente(s) no total · ${ativos} ativo(s) no período`}
+            maxWidth="max-w-6xl"
+          >
+            <ClientesTable
+              clients={g.clients}
+              onClickClient={(cm) => {
+                setDrillAllClientesGestor(null);
+                setDrillClient({ clientId: cm.client.id, gestorNome: g.gestor });
+              }}
+            />
           </Modal>
         );
       })()}

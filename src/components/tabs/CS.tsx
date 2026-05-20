@@ -42,6 +42,8 @@ export function CS() {
   } | null>(null);
   // Drill em um cliente específico (vindo de melhores/piores nos cards mini)
   const [drillClient, setDrillClient] = useState<{ clientId: string; csNome: string } | null>(null);
+  // Drill em TODOS os clientes de UM CS (abre popup grande com a lista)
+  const [drillAllClientesCs, setDrillAllClientesCs] = useState<string | null>(null);
   // View-as (admin): nome do CS pra simular o perfil pessoal dele.
   // null = visão completa (default do admin).
   const [viewAsCs, setViewAsCs] = useState<string | null>(null);
@@ -318,6 +320,7 @@ export function CS() {
                     <PainelMiniCs
                       key={c.cs}
                       cs={c}
+                      onClickCard={() => setDrillAllClientesCs(c.cs)}
                       onClickMensagens={() => setDrillCs({ cs: c.cs, type: 'mensagens' })}
                       onClickTransferencias={() => setDrillCs({ cs: c.cs, type: 'transferencias' })}
                       onClickSpend={() => setDrillCs({ cs: c.cs, type: 'spend' })}
@@ -469,6 +472,31 @@ export function CS() {
             maxWidth="max-w-5xl"
           >
             <ClienteDrilldown cm={cm} />
+          </Modal>
+        );
+      })()}
+
+      {/* Drill-down de TODOS os clientes de um CS (popup grande) */}
+      {(() => {
+        if (!drillAllClientesCs) return null;
+        const c = summary.cses.find((x) => x.cs === drillAllClientesCs);
+        if (!c) return null;
+        const ativos = c.clients.filter((cl) => !cl.inactive).length;
+        return (
+          <Modal
+            open
+            onClose={() => setDrillAllClientesCs(null)}
+            title={`Clientes — ${c.cs}`}
+            subtitle={`${c.clients.length} cliente(s) no total · ${ativos} ativo(s) no período`}
+            maxWidth="max-w-6xl"
+          >
+            <ClientesTable
+              clients={c.clients}
+              onClickClient={(cm) => {
+                setDrillAllClientesCs(null);
+                setDrillClient({ clientId: cm.client.id, csNome: c.cs });
+              }}
+            />
           </Modal>
         );
       })()}
