@@ -84,6 +84,7 @@ export function computeCsMetrics(opts: {
       cpt: null,
       campaigns: [],
       leads: [],
+      allLeads: [],
       churned: false,
       churnCutoff: null,
       inactive: false,

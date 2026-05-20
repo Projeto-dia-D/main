@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Headphones, AlertTriangle, Link2 } from 'lucide-react';
+import { AlertTriangle, Link2 } from 'lucide-react';
 import { useLeads } from '../../hooks/useLeads';
 import { useMetaSpend } from '../../hooks/useMetaSpend';
 import { useMondayClients } from '../../hooks/useMondayClients';
@@ -12,11 +12,9 @@ import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
 import { Modal } from '../Modal';
 import { PainelGeralCs } from '../cs/PainelGeralCs';
 import { PainelMiniCs } from '../cs/PainelMiniCs';
-import { CsCard } from '../cs/CsCard';
 import { CsesTable } from '../cs/CsesTable';
 import { PerfilPessoalCs } from '../cs/PerfilPessoalCs';
 import { ClientesTable } from '../gestor/ClientesTable';
-import { DoutoresList } from '../gestor/DoutoresList';
 import { CampanhasTable } from '../gestor/CampanhasTable';
 import { ClienteDrilldown } from '../gestor/ClienteDrilldown';
 import { LeadsTable } from '../programacao/LeadsTable';
@@ -37,8 +35,6 @@ export function CS() {
   // Aba abre por padrão filtrada pelo período "Dia D" (dia 12 do mês até hoje)
   const [range, setRange] = useState<DateRange>(() => diaDRange());
   const [openModal, setOpenModal] = useState<ModalKind>(null);
-  // Nome do CS selecionado para abrir drill-down com seus clientes
-  const [selectedCs, setSelectedCs] = useState<string | null>(null);
   // Drill-down adicional: { cs, type } onde type = mensagens | transferencias | spend
   const [drillCs, setDrillCs] = useState<{
     cs: string;
@@ -50,7 +46,7 @@ export function CS() {
   // null = visão completa (default do admin).
   const [viewAsCs, setViewAsCs] = useState<string | null>(null);
   const { lookup: lookupPhoto } = useUserPhotos();
-  const { report: reportNotification, dismiss: dismissNotification } = useNotifications();
+  const { report: reportNotification, resolve: resolveNotification } = useNotifications();
 
   const { leads, loading: leadsLoading, error: leadsError } = useLeads();
   const {
@@ -204,16 +200,16 @@ export function CS() {
   // Reporta erros pro centro de notificações
   useEffect(() => {
     if (leadsError) reportNotification({ id: 'cs-supabase', level: 'error', source: 'Supabase', message: leadsError });
-    else dismissNotification('cs-supabase');
-  }, [leadsError, reportNotification, dismissNotification]);
+    else resolveNotification('cs-supabase');
+  }, [leadsError, reportNotification, resolveNotification]);
   useEffect(() => {
     if (mondayError) reportNotification({ id: 'cs-monday', level: 'error', source: 'Monday', message: mondayError });
-    else dismissNotification('cs-monday');
-  }, [mondayError, reportNotification, dismissNotification]);
+    else resolveNotification('cs-monday');
+  }, [mondayError, reportNotification, resolveNotification]);
   useEffect(() => {
     if (linksError) reportNotification({ id: 'cs-links', level: 'error', source: 'Vínculos', message: linksError });
-    else dismissNotification('cs-links');
-  }, [linksError, reportNotification, dismissNotification]);
+    else resolveNotification('cs-links');
+  }, [linksError, reportNotification, resolveNotification]);
   useEffect(() => {
     metaErrors.forEach((msg, i) => {
       reportNotification({ id: `cs-meta-${i}-${msg.slice(0,40)}`, level: 'error', source: 'Meta Ads', message: msg });
@@ -352,27 +348,6 @@ export function CS() {
                 </div>
               )}
 
-              {summary.cses.length > 0 && (
-                <section>
-                  <div className="flex items-center gap-2 mb-4">
-                    <Headphones className="text-burst-orange-bright" size={20} />
-                    <h3 className="font-display text-xl tracking-wider text-white">Análise por CS</h3>
-                    <span className="text-xs text-burst-muted">{summary.cses.length} CS(s)</span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                    {summary.cses.map((c) => (
-                      <CsCard
-                        key={c.cs}
-                        cs={c}
-                        onClick={() => setSelectedCs(c.cs)}
-                        onClickMensagens={() => setDrillCs({ cs: c.cs, type: 'mensagens' })}
-                        onClickTransferencias={() => setDrillCs({ cs: c.cs, type: 'transferencias' })}
-                        onClickSpend={() => setDrillCs({ cs: c.cs, type: 'spend' })}
-                      />
-                    ))}
-                  </div>
-                </section>
-              )}
             </>
           )}
 
@@ -430,22 +405,6 @@ export function CS() {
         subtitle={`${summary.cses.length} CS(s) com clientes vinculados`}
       >
         <CsesTable cses={summary.cses} />
-      </Modal>
-
-      {/* Drill-down: clica num CS → mostra TODOS os doutores dela */}
-      <Modal
-        open={selectedCs !== null}
-        onClose={() => setSelectedCs(null)}
-        title={selectedCs ? `Doutores de ${selectedCs}` : ''}
-        subtitle={(() => {
-          const c = summary.cses.find((c) => c.cs === selectedCs);
-          if (!c) return '';
-          return `${c.clients.length} doutor(es) • ${c.totalTransferencias} transferência(s) • CPT ${c.cpt === null ? '—' : `R$ ${c.cpt.toFixed(2)}`}`;
-        })()}
-      >
-        <DoutoresList
-          clients={summary.cses.find((c) => c.cs === selectedCs)?.clients ?? []}
-        />
       </Modal>
 
       {/* Drill-down por métrica: mensagens, transferencias, spend */}

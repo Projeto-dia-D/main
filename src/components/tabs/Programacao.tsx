@@ -21,14 +21,16 @@ import { LeadsTable } from '../programacao/LeadsTable';
 import { TransferidosTable } from '../programacao/TransferidosTable';
 import { DoutoresTable } from '../programacao/DoutoresTable';
 import { PerfilPessoalProgramador } from '../programacao/PerfilPessoalProgramador';
+import { RevisaoMotivos } from '../programacao/RevisaoMotivos';
 import { Modal } from '../Modal';
-import { Users, AlertTriangle, PhoneOff, FileWarning, ListChecks } from 'lucide-react';
+import { Users, AlertTriangle, PhoneOff, FileWarning, ListChecks, HelpCircle, BarChart3 } from 'lucide-react';
 import { useUser, hasFullAccess } from '../../lib/userContext';
 import { ViewAsTab } from '../ViewAsTab';
 import { useUserPhotos } from '../../hooks/useUserPhotos';
 import { nameMatchesScope } from '../../lib/monday';
 
 type ModalKind = 'leads' | 'transferidos' | 'doutores' | 'interrompidos' | 'incompletos' | null;
+type SubAba = 'metricas' | 'revisao';
 
 export function Programacao() {
   const { leads, loading, error, lastUpdate, configMissing } = useLeads();
@@ -41,6 +43,7 @@ export function Programacao() {
 
   const [range, setRange] = useState<DateRange>({ start: null, end: null });
   const [openModal, setOpenModal] = useState<ModalKind>(null);
+  const [subAba, setSubAba] = useState<SubAba>('metricas');
   // null = mostra todos; senão filtra leads por responsável (Gabriel/Eduardo)
   const [responsavelFiltro, setResponsavelFiltro] = useState<string | null>(null);
   // Drill-down em UM doutor a partir do PerfilPessoalProgramador
@@ -146,6 +149,35 @@ export function Programacao() {
 
   return (
     <div className="p-6 lg:p-8 flex flex-col gap-6 max-w-[1600px] mx-auto">
+      {/* Sub-abas: Métricas (normal) | Revisão de motivos (curadoria semanal) */}
+      <div className="flex items-center gap-1.5 bg-burst-card border border-burst-border rounded-xl p-1.5 w-fit">
+        <button
+          onClick={() => setSubAba('metricas')}
+          className={[
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors',
+            subAba === 'metricas'
+              ? 'bg-burst-orange/20 text-burst-orange-bright shadow-orange-glow-sm'
+              : 'text-burst-muted hover:text-white hover:bg-white/5',
+          ].join(' ')}
+        >
+          <BarChart3 size={14} /> Métricas
+        </button>
+        <button
+          onClick={() => setSubAba('revisao')}
+          className={[
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors',
+            subAba === 'revisao'
+              ? 'bg-burst-orange/20 text-burst-orange-bright shadow-orange-glow-sm'
+              : 'text-burst-muted hover:text-white hover:bg-white/5',
+          ].join(' ')}
+        >
+          <HelpCircle size={14} /> Revisar dúvidas
+        </button>
+      </div>
+
+      {subAba === 'revisao' && <RevisaoMotivos />}
+      {subAba === 'metricas' && (
+      <>
       {/* Tabs de responsável: só admin pode trocar. Programador vê os
           próprios dados fixados (sem opção de troca). */}
       {hasFullAccess(user) && responsaveis.length > 0 && (
@@ -287,6 +319,8 @@ export function Programacao() {
             Esta aba mostra dados de Programação. Use a aba do seu setor.
           </p>
         </div>
+      )}
+      </>
       )}
 
       <Modal

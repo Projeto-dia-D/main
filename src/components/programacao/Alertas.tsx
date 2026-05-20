@@ -1,8 +1,9 @@
 import { useMemo, useEffect, useState } from 'react';
-import { Bell, Clock4, AlertOctagon } from 'lucide-react';
+import { Bell, Clock4, AlertOctagon, Copy, Check } from 'lucide-react';
 import type { MetricsSummary, RelatorioBias } from '../../lib/types';
 import { AlertaLeadSemDoutor } from './AlertaLeadSemDoutor';
 import { fetchAllInstances } from '../../lib/uazapi';
+import { useMondayClients } from '../../hooks/useMondayClients';
 
 interface Props {
   summary: MetricsSummary;
@@ -70,7 +71,118 @@ function GrupoInstancia({ group }: { group: TokenGroup }) {
 }
 
 export function Alertas({ summary }: Props) {
-  const semTransf = summary.doutores.filter((d) => d.diasSemTransferencia >= 5);
+  // Já tiveram alguma transferência mas estão há 5+ dias sem
+  const semTransf = summary.doutores.filter(
+    (d) => d.diasSemTransferencia >= 5 && d.ultimaTransferencia !== null
+  );
+  // Doutores que NUNCA tiveram transferência (ultimaTransferencia === null)
+  const nuncaTransf = summary.doutores.filter((d) => d.ultimaTransferencia === null);
+  const { clientsAll } = useMondayClients();
+  const [copiado, setCopiado] = useState(false);
+
+  // Agrupa nuncaTransf por CS (match cliente Monday por TOKENS do nome)
+  const nuncaTransfPorCs = useMemo(() => {
+    const STOPWORDS = new Set([
+      'dr', 'dra', 'drs', 'sr', 'sra', 'doutor', 'doutora',
+      'clinica', 'instituto', 'consultorio', 'odontologia',
+    ]);
+    function norm(s: string): string {
+      return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    }
+    function tokens(s: string): string[] {
+      return norm(s)
+        .split(/[\s\-_(),.]+/)
+        .filter((t) => t.length >= 3 && !STOPWORDS.has(t));
+    }
+
+    // Pré-computa tokens dos clientes Monday
+    const clientTokens = clientsAll.map((c) => ({
+      cs: c.cs?.trim() ?? null,
+      name: c.name,
+      tks: new Set(tokens(c.name)),
+    }));
+
+    const grupos = new Map<string, string[]>();
+    for (const d of nuncaTransf) {
+      const dTks = tokens(d.nome);
+      // Procura o cliente que melhor casa por tokens
+      let best: { cs: string | null; score: number; hasLong: boolean } | null = null;
+      for (const c of clientTokens) {
+        if (c.tks.size === 0) continue;
+        let score = 0;
+        let hasLong = false;
+        for (const t of dTks) {
+          if (c.tks.has(t)) {
+            score++;
+            if (t.length >= 5) hasLong = true;
+          }
+        }
+        // Match: 1 token longo (5+) OU 2 tokens em comum
+        if ((hasLong || score >= 2) && (!best || score > best.score)) {
+          best = { cs: c.cs, score, hasLong };
+        }
+      }
+      const cs = best?.cs || 'Sem CS atribuído';
+      const arr = grupos.get(cs) ?? [];
+      arr.push(d.nome);
+      grupos.set(cs, arr);
+    }
+    return Array.from(grupos.entries()).sort((a, b) => {
+      if (a[0] === 'Sem CS atribuído') return 1;
+      if (b[0] === 'Sem CS atribuído') return -1;
+      return a[0].localeCompare(b[0]);
+    });
+  }, [nuncaTransf, clientsAll]);
+
+  async function copiarLista() {
+    const linhas: string[] = [];
+    linhas.push('*Doutores que ainda não receberam transferência*');
+    linhas.push('');
+    for (const [cs, doutores] of nuncaTransfPorCs) {
+      linhas.push(`*${cs}* (${doutores.length})`);
+      for (const nome of doutores) {
+        linhas.push(`• ${nome}`);
+      }
+      linhas.push('');
+    }
+    const texto = linhas.join('\n').trim();
+
+    // Tenta API moderna primeiro (HTTPS/localhost)
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(texto);
+        setCopiado(true);
+        setTimeout(() => setCopiado(false), 2500);
+        return;
+      }
+    } catch {
+      // segue pro fallback
+    }
+
+    // Fallback pra IP local / contexto não-seguro: textarea + execCommand
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = texto;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '0';
+      ta.setAttribute('readonly', '');
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, texto.length);
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (ok) {
+        setCopiado(true);
+        setTimeout(() => setCopiado(false), 2500);
+      } else {
+        alert('Não consegui copiar automaticamente. Selecione e copie manualmente:\n\n' + texto);
+      }
+    } catch (e) {
+      console.error('Falha ao copiar:', e);
+      alert('Erro ao copiar. Texto:\n\n' + texto);
+    }
+  }
 
   // Mapa token → nomeDoutor construído a partir dos leads que já têm doutor no DB
   const tokenParaDoutor = useMemo<Map<string, string>>(() => {
@@ -115,7 +227,7 @@ export function Alertas({ summary }: Props) {
       .sort((a, b) => b.leads.length - a.leads.length);
   }, [summary.leadsSemDoutor, tokenParaDoutor, uazapiMap]);
 
-  const hasAlerts = summary.leadsSemDoutor.length > 0 || semTransf.length > 0;
+  const hasAlerts = summary.leadsSemDoutor.length > 0 || semTransf.length > 0 || nuncaTransf.length > 0;
 
   return (
     <section className="rounded-2xl bg-burst-card border border-burst-border p-6">
@@ -126,7 +238,7 @@ export function Alertas({ summary }: Props) {
         </h3>
         {hasAlerts && (
           <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-red-500/15 text-red-400 font-bold animate-pulse">
-            {summary.leadsSemDoutor.length + semTransf.length} ativos
+            {summary.leadsSemDoutor.length + semTransf.length + nuncaTransf.length} ativos
           </span>
         )}
       </div>
@@ -145,6 +257,44 @@ export function Alertas({ summary }: Props) {
           <div className="flex flex-col gap-2 max-h-[480px] overflow-y-auto scrollbar-thin pr-1">
             {tokenGroups.map((g) => (
               <GrupoInstancia key={g.token} group={g} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {nuncaTransf.length > 0 && (
+        <div className="mb-4">
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div className="text-[11px] uppercase tracking-widest text-burst-muted">
+              Doutores que NUNCA receberam transferência — {nuncaTransf.length}
+            </div>
+            <button
+              onClick={copiarLista}
+              title="Copiar lista agrupada por CS pra WhatsApp"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold border border-burst-orange/40 bg-burst-orange/10 text-burst-orange-bright hover:bg-burst-orange/20 hover:border-burst-orange transition-colors"
+            >
+              {copiado ? <Check size={12} /> : <Copy size={12} />}
+              {copiado ? 'copiado!' : 'copiar lista'}
+            </button>
+          </div>
+          <div className="flex flex-col gap-2">
+            {nuncaTransfPorCs.map(([cs, doutores]) => (
+              <div
+                key={cs}
+                className="rounded-xl border border-red-500/30 bg-red-500/5 p-3 animate-fade-in"
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[11px] uppercase tracking-widest text-red-400 font-bold">
+                    CS: {cs}
+                  </span>
+                  <span className="text-[10px] text-burst-muted">· {doutores.length} doutor(es)</span>
+                </div>
+                <ul className="flex flex-col gap-0.5 text-xs">
+                  {doutores.map((nome) => (
+                    <li key={nome} className="text-white/85">• {nome}</li>
+                  ))}
+                </ul>
+              </div>
             ))}
           </div>
         </div>

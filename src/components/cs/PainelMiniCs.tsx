@@ -5,6 +5,7 @@ import { tierColorCpt, tierLabelCpt, progressToNextTierCpt, brl, type ClientMetr
 import type { CsMetrics } from '../../lib/csMetrics';
 import { Avatar } from '../Avatar';
 import { useUserPhotos } from '../../hooks/useUserPhotos';
+import { ClientesMiniList as ClientesFullList } from '../gestor/ClientesMiniList';
 
 interface Props {
   cs: CsMetrics;
@@ -88,11 +89,13 @@ export function PainelMiniCs({
       </div>
 
       {(melhores.length > 0 || piores.length > 0) && (
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-2 mb-3">
           <ClientesMiniList title="Melhores" icon={<Trophy size={10} className="text-green-400" />} clients={melhores} tone="success" onClickCliente={onClickCliente} />
           <ClientesMiniList title="Piores" icon={<AlertTriangle size={10} className="text-red-400" />} clients={piores} tone="danger" onClickCliente={onClickCliente} />
         </div>
       )}
+
+      <ClientesFullList clients={cs.clients} onClickCliente={onClickCliente} />
     </section>
   );
 }
@@ -111,10 +114,10 @@ function rankClients(clients: ClientMetrics[]): {
     .slice(0, 3);
   const piores = [...ativos]
     .filter((c) => c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 170))
+    // Ordena por SPEND desc — quem gastou mais sem retorno é o pior.
+    // Empate em spend cai pra CPT desc (mais caro pior).
     .sort((a, b) => {
-      const aBad = a.transferencias === 0;
-      const bBad = b.transferencias === 0;
-      if (aBad !== bBad) return aBad ? -1 : 1;
+      if (b.spend !== a.spend) return b.spend - a.spend;
       return (b.cpt ?? 0) - (a.cpt ?? 0);
     })
     .slice(0, 3);

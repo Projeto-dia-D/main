@@ -10,7 +10,6 @@ import { Modal } from '../Modal';
 import { PainelGeralDesign } from '../design/PainelGeralDesign';
 import { PainelMiniDesigner } from '../design/PainelMiniDesigner';
 import { RankingDesigners } from '../design/RankingDesigners';
-import { DesignerCard } from '../design/DesignerCard';
 import { EventosTable } from '../design/EventosTable';
 import { EventosSemDesignerEditor } from '../design/EventosSemDesignerEditor';
 
@@ -127,26 +126,6 @@ export function Design() {
       )}
 
       <RankingDesigners designers={summary.designers} />
-
-      {summary.designers.length > 0 && (
-        <section>
-          <div className="flex items-center gap-2 mb-4">
-            <Palette className="text-burst-orange-bright" size={20} />
-            <h3 className="font-display text-xl tracking-wider text-white">Análise por Designer</h3>
-            <span className="text-xs text-burst-muted">{summary.designers.length} designer(s)</span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-            {summary.designers.map((d) => (
-              <DesignerCard
-                key={d.nome}
-                designer={d}
-                onClickFeitas={() => setDrill({ designer: d.nome, type: 'feitas' })}
-                onClickManutencoes={() => setDrill({ designer: d.nome, type: 'manutencoes' })}
-              />
-            ))}
-          </div>
-        </section>
-      )}
 
       {summary.eventosSemDesigner.length > 0 && (
         <button

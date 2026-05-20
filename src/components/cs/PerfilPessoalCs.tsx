@@ -92,15 +92,12 @@ export function PerfilPessoalCs({
       .slice(0, 5);
 
     // Piores: clientes que GASTARAM mas com 0 transferências OU CPT muito alto.
-    // Ordena por spend desc (quem gastou mais sem retorno é o pior).
+    // Ordena por SPEND desc (quem gastou mais sem retorno é o pior).
+    // Empate em spend cai pra CPT desc (mais caro pior).
     const piores = [...ativos]
       .filter((c) => c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 170))
       .sort((a, b) => {
-        // Sem transferências primeiro (pior cenário)
-        const aBad = a.transferencias === 0;
-        const bBad = b.transferencias === 0;
-        if (aBad !== bBad) return aBad ? -1 : 1;
-        // Depois por CPT desc
+        if (b.spend !== a.spend) return b.spend - a.spend;
         return (b.cpt ?? 0) - (a.cpt ?? 0);
       })
       .slice(0, 5);
