@@ -10,7 +10,7 @@ import { filterByDateRange, isTransferido, type DateRange } from '../../lib/metr
 import { computeGestorMetrics } from '../../lib/gestorMetrics';
 import { LeadsTable } from '../programacao/LeadsTable';
 import { TransferidosTable } from '../programacao/TransferidosTable';
-import { isClientChurned, nameMatchesScope } from '../../lib/monday';
+import { isClientChurned, isClientElegivelMeta, nameMatchesScope } from '../../lib/monday';
 import { useUser, hasFullAccess } from '../../lib/userContext';
 import { ViewAsTab } from '../ViewAsTab';
 import { useUserPhotos } from '../../hooks/useUserPhotos';
@@ -285,6 +285,31 @@ export function GestorTrafego() {
     });
     // Não temos como saber quais sair sem tracking; deixa pro usuário dispensar manualmente
   }, [metaErrors, reportNotification]);
+
+  // === Pendência: doutores ativos sem conta Meta vinculada ===
+  // Espelha o banner DoutoresSemVinculoMeta como notificação persistente,
+  // pra ficar visível também na aba Notificações (não só no Gestor).
+  const doutoresSemVinculoCount = useMemo(() => {
+    if (mondayAllClients.length === 0) return 0;
+    const linkedIds = new Set(links.map((l) => l.monday_client_id));
+    return mondayAllClients.filter(
+      (c) => isClientElegivelMeta(c) && !linkedIds.has(c.id)
+    ).length;
+  }, [mondayAllClients, links]);
+
+  useEffect(() => {
+    if (doutoresSemVinculoCount > 0) {
+      reportNotification({
+        id: 'gestor-doutores-sem-vinculo',
+        level: 'warning',
+        source: 'Vínculos',
+        message: `${doutoresSemVinculoCount} doutor(es) ativos sem conta Meta vinculada — o spend deles não aparece nas métricas.`,
+        detail: 'Resolva em: aba Gestor de Tráfego → "Vincular contas".',
+      });
+    } else {
+      resolveNotification('gestor-doutores-sem-vinculo');
+    }
+  }, [doutoresSemVinculoCount, reportNotification, resolveNotification]);
 
   return (
     <div className="p-6 lg:p-8 flex flex-col gap-6 max-w-[1600px] mx-auto">
