@@ -134,6 +134,13 @@ function rankClients(clients: ClientMetrics[]): {
     .slice(0, 3);
   const piores = [...ativos]
     .filter((c) => c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 170))
+    // Tira clientes onde > 50% dos chats foram INTERROMPIDOS — problema do Bia,
+    // nao do CS. Esses sao destacados separadamente no badge "interrompendo".
+    .filter((c) => {
+      const total = c.mensagensIniciadas + c.chatsInterrompidos;
+      if (total === 0) return true;
+      return (c.chatsInterrompidos / total) <= 0.5;
+    })
     // Ordena por SPEND desc — quem gastou mais sem retorno é o pior.
     // Empate em spend cai pra CPT desc (mais caro pior).
     .sort((a, b) => {

@@ -147,6 +147,14 @@ function rankClients(clients: ClientMetrics[]): {
 
   const piores = [...ativos]
     .filter((c) => c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 170))
+    // Tira clientes onde > 50% dos chats foram INTERROMPIDOS. Quando a maioria
+    // dos leads e interrompido, o problema esta no Bia (script, funil) e nao no
+    // CS/gestor — entao nao faz sentido apontar como "queimando dinheiro" deles.
+    .filter((c) => {
+      const total = c.mensagensIniciadas + c.chatsInterrompidos;
+      if (total === 0) return true;
+      return (c.chatsInterrompidos / total) <= 0.5;
+    })
     // Ordena por SPEND desc — quem gastou mais sem retorno é o pior.
     // Empate em spend cai pra CPT desc (mais caro pior).
     .sort((a, b) => {

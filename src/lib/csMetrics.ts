@@ -81,6 +81,7 @@ export function computeCsMetrics(opts: {
       spend: 0,
       transferencias: 0,
       mensagensIniciadas: 0,
+      chatsInterrompidos: 0,
       cpt: null,
       campaigns: [],
       leads: [],

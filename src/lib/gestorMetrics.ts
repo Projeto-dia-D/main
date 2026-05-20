@@ -25,7 +25,8 @@ export interface ClientMetrics {
   metaMatchVia: 'account' | 'nome' | null; // como o spend foi atribuído
   spend: number;                        // investimento Meta (Fim/Venda) atribuído
   transferencias: number;               // transferências válidas no período
-  mensagensIniciadas: number;           // total de leads (chats iniciados) do cliente
+  mensagensIniciadas: number;           // total de leads ATIVOS (excluindo interrompidos/incompletos/desclassificados)
+  chatsInterrompidos: number;           // leads que tiveram motivo "chat interrompido" — nao conta nas metricas mas e util pra entender saude do funil
   cpt: number | null;                   // null se não há transferências
   campaigns: CampaignInsight[];         // campanhas Fim/Venda casadas
   leads: RelatorioBias[];               // leads ATIVOS (excluindo chat interrompido/incompleto/desclassificado) — usado nas métricas
@@ -381,6 +382,9 @@ export function computeGestorMetrics(opts: {
 
     const transferencias = leadsDoCliente.filter(isTransferido).length;
     const mensagensIniciadas = leadsDoCliente.length;
+    // Conta interrompidos pra dar visibilidade — quando muitos chats sao
+    // interrompidos, o problema e do Bia (script/funil) e nao do CS/gestor.
+    const chatsInterrompidos = allLeadsDoCliente.filter(isInterrompido).length;
     const campaigns = campaignsByClient.get(cl.name) ?? [];
     const spendBruto = campaigns.reduce((s, c) => s + c.spend, 0);
 
@@ -448,6 +452,7 @@ export function computeGestorMetrics(opts: {
       spend,
       transferencias,
       mensagensIniciadas,
+      chatsInterrompidos,
       cpt,
       campaigns,
       leads: leadsDoCliente,
