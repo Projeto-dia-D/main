@@ -49,7 +49,9 @@ export function GestorTrafego() {
   // View-as (admin): nome do gestor pra simular o perfil pessoal dele.
   const [viewAsGestor, setViewAsGestor] = useState<string | null>(null);
   // Drill em UM cliente específico
-  const [drillClient, setDrillClient] = useState<{ clientId: string; gestorNome: string } | null>(null);
+  // `fromAllClientes` indica se foi aberto a partir do popup "Ver todos" —
+  // nesse caso, o modal mostra botao "Voltar" que retorna pra lista.
+  const [drillClient, setDrillClient] = useState<{ clientId: string; gestorNome: string; fromAllClientes?: boolean } | null>(null);
   // Drill em TODOS os clientes de UM gestor (abre popup grande com a lista)
   const [drillAllClientesGestor, setDrillAllClientesGestor] = useState<string | null>(null);
   const { lookup: lookupPhoto } = useUserPhotos();
@@ -652,10 +654,17 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
         const cm =
           allClientMetrics.find((c) => c.client.id === drillClient.clientId);
         if (!cm) return null;
+        const cameFromList = !!drillClient.fromAllClientes;
         return (
           <Modal
             open
-            onClose={() => setDrillClient(null)}
+            // Fechar (X ou ESC sem onBack) fecha TUDO — tanto o drill quanto a lista.
+            onClose={() => {
+              setDrillClient(null);
+              setDrillAllClientesGestor(null);
+            }}
+            // Voltar (so se veio da lista) — fecha drill e mantem lista aberta.
+            onBack={cameFromList ? () => setDrillClient(null) : undefined}
             title={cm.client.name}
             subtitle={`Cliente de ${drillClient.gestorNome}`}
             maxWidth="max-w-5xl"
@@ -665,9 +674,13 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
         );
       })()}
 
-      {/* Drill-down de TODOS os clientes de um gestor (popup grande) */}
+      {/* Drill-down de TODOS os clientes de um gestor (popup grande).
+          So renderiza se NAO tem drillClient aberto — quando user clica num
+          card de cliente la dentro, esse modal "esconde" e o drillClient
+          aparece por cima, com botao "Voltar" pra retornar pra lista. */}
       {(() => {
         if (!drillAllClientesGestor) return null;
+        if (drillClient?.fromAllClientes) return null;
         const g = summary.gestores.find((x) => x.gestor === drillAllClientesGestor);
         if (!g) return null;
         const ativos = g.clients.filter((c) => !c.inactive).length;
@@ -682,8 +695,9 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
             <ClientesGridView
               clients={g.clients}
               onClickClient={(cm) => {
-                setDrillAllClientesGestor(null);
-                setDrillClient({ clientId: cm.client.id, gestorNome: g.gestor });
+                // Mantem drillAllClientesGestor setado (vai voltar quando user
+                // clicar em "Voltar" no drill individual).
+                setDrillClient({ clientId: cm.client.id, gestorNome: g.gestor, fromAllClientes: true });
               }}
             />
           </Modal>

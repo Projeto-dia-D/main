@@ -41,8 +41,9 @@ export function CS() {
     cs: string;
     type: 'mensagens' | 'transferencias' | 'spend';
   } | null>(null);
-  // Drill em um cliente específico (vindo de melhores/piores nos cards mini)
-  const [drillClient, setDrillClient] = useState<{ clientId: string; csNome: string } | null>(null);
+  // Drill em um cliente específico (vindo de melhores/piores nos cards mini OU
+  // da lista grande). `fromAllClientes` controla se mostra botao "Voltar".
+  const [drillClient, setDrillClient] = useState<{ clientId: string; csNome: string; fromAllClientes?: boolean } | null>(null);
   // Drill em TODOS os clientes de UM CS (abre popup grande com a lista)
   const [drillAllClientesCs, setDrillAllClientesCs] = useState<string | null>(null);
   // View-as (admin): nome do CS pra simular o perfil pessoal dele.
@@ -457,17 +458,23 @@ export function CS() {
         );
       })()}
 
-      {/* Drill-down de UM cliente específico (vindo de melhores/piores nos cards) */}
+      {/* Drill-down de UM cliente específico (vindo de melhores/piores nos cards
+          OU da lista grande do drillAllClientesCs) */}
       {(() => {
         if (!drillClient) return null;
         // Procura em todos os clientes (CS + sem CS)
         const all = summary.cses.flatMap((c) => c.clients).concat(summary.clientesSemCs);
         const cm = all.find((c) => c.client.id === drillClient.clientId);
         if (!cm) return null;
+        const cameFromList = !!drillClient.fromAllClientes;
         return (
           <Modal
             open
-            onClose={() => setDrillClient(null)}
+            onClose={() => {
+              setDrillClient(null);
+              setDrillAllClientesCs(null);
+            }}
+            onBack={cameFromList ? () => setDrillClient(null) : undefined}
             title={cm.client.name}
             subtitle={`Cliente de ${drillClient.csNome}`}
             maxWidth="max-w-5xl"
@@ -477,9 +484,11 @@ export function CS() {
         );
       })()}
 
-      {/* Drill-down de TODOS os clientes de um CS (popup grande) */}
+      {/* Drill-down de TODOS os clientes de um CS (popup grande).
+          So renderiza se nao tem drillClient(fromAllClientes) sobreposto. */}
       {(() => {
         if (!drillAllClientesCs) return null;
+        if (drillClient?.fromAllClientes) return null;
         const c = summary.cses.find((x) => x.cs === drillAllClientesCs);
         if (!c) return null;
         const ativos = c.clients.filter((cl) => !cl.inactive).length;
@@ -494,8 +503,8 @@ export function CS() {
             <ClientesGridView
               clients={c.clients}
               onClickClient={(cm) => {
-                setDrillAllClientesCs(null);
-                setDrillClient({ clientId: cm.client.id, csNome: c.cs });
+                // Mantem drillAllClientesCs setado pra "Voltar" funcionar.
+                setDrillClient({ clientId: cm.client.id, csNome: c.cs, fromAllClientes: true });
               }}
             />
           </Modal>
