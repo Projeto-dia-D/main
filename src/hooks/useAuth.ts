@@ -10,7 +10,7 @@ import {
 export interface UseAuthResult {
   user: AuthUser | null;
   loading: boolean; // true enquanto não temos os dados do Monday p/ resolver email
-  login: (email: string, password: string) => { ok: boolean; error: string | null };
+  login: (email: string, password: string) => Promise<{ ok: boolean; error: string | null }>;
   logout: () => void;
   /** Re-resolve o usuário atual com base nos novos emails do Monday.
    *  Útil quando alguém foi adicionado/removido no Monday enquanto a sessão estava aberta. */
@@ -30,14 +30,14 @@ export function useAuth(emails: MondayEmails | null): UseAuthResult {
   }, [emails, user]);
 
   const login = useCallback(
-    (email: string, password: string) => {
+    async (email: string, password: string) => {
       if (!emails) {
         return {
           ok: false,
           error: 'Aguarde, ainda carregando dados de usuários do Monday...',
         };
       }
-      const { user: u, error } = attemptLogin(email, password, emails);
+      const { user: u, error } = await attemptLogin(email, password, emails);
       if (u) setUser(u);
       return { ok: !!u, error };
     },

@@ -1,5 +1,7 @@
 import { AlertCircle, AlertTriangle, Info, BellOff, X } from 'lucide-react';
 import { useNotifications, type NotificationLevel } from '../../lib/notificationsContext';
+import { useUser, hasFullAccess } from '../../lib/userContext';
+import { SupabaseUsagePanel } from '../SupabaseUsagePanel';
 
 function levelStyle(level: NotificationLevel) {
   if (level === 'error') {
@@ -44,6 +46,8 @@ function fmtTime(ms: number): string {
 
 export function Notificacoes() {
   const { notifications, dismiss, clear } = useNotifications();
+  const user = useUser();
+  const isAdmin = hasFullAccess(user);
 
   // Ordena por mais recente primeiro
   const sorted = [...notifications].sort((a, b) => b.lastSeen - a.lastSeen);
@@ -55,6 +59,9 @@ export function Notificacoes() {
 
   return (
     <div className="p-6 lg:p-8 flex flex-col gap-6 max-w-[1100px] mx-auto">
+      {/* Painel de uso do Supabase — apenas pra admins */}
+      {isAdmin && <SupabaseUsagePanel />}
+
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="text-xs text-burst-muted">
           <span className="text-white font-semibold">{notifications.length}</span> notificação(ões){' '}
