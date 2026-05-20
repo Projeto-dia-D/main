@@ -147,9 +147,10 @@ function rankClients(clients: ClientMetrics[]): {
 
   const piores = [...ativos]
     .filter((c) => c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 170))
-    // Tira clientes onde > 50% dos chats foram INTERROMPIDOS. Quando a maioria
-    // dos leads e interrompido, o problema esta no Bia (script, funil) e nao no
-    // CS/gestor — entao nao faz sentido apontar como "queimando dinheiro" deles.
+    // Tira clientes onde > 50% dos chats foram INTERROMPIDOS pela CRC do
+    // cliente. "Chat interrompido" = a CRC pegou o atendimento manualmente
+    // (a Bia foi interrompida). Nao da pra avaliar o funil da Bia nesse
+    // cenario — atendimento e manual e nao envolve o CS/gestor.
     .filter((c) => {
       const total = c.mensagensIniciadas + c.chatsInterrompidos;
       if (total === 0) return true;

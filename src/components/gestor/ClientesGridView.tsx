@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Search, DollarSign, ArrowDownRight, UserX, Activity, AlertTriangle, Trophy, Users, MessageCircle, PhoneOff } from 'lucide-react';
+import { Search, DollarSign, ArrowDownRight, UserX, Activity, AlertTriangle, Trophy, Users, MessageCircle, UserCheck } from 'lucide-react';
 import type { ClientMetrics } from '../../lib/gestorMetrics';
 import { brl, tierColorCpt, tierForCpt } from '../../lib/gestorMetrics';
 
@@ -28,10 +28,11 @@ export function ClientesGridView({ clients, onClickClient }: Props) {
   // Pra ver inativos/churn, usuario clica em "Todos" no chip de cima.
   const [filtro, setFiltro] = useState<FiltroVisao>('ativos');
 
-  // Helper: cliente onde > 50% dos chats foram interrompidos.
-  // Problema do Bia (script/funil), nao do CS/gestor. Exclui de "Problemas"
-  // pra nao penalizar quem nao tem culpa.
-  const isBiaInterrompendo = (c: ClientMetrics) => {
+  // Helper: cliente onde > 50% dos chats foram interrompidos pela CRC.
+  // "Chat interrompido" = CRC do cliente pegou o atendimento manualmente —
+  // a Bia foi interrompida, nao tem como avaliar o funil dela. Exclui de
+  // "Problemas" pra nao penalizar quem na verdade ta atendendo manual.
+  const isCrcAtendendo = (c: ClientMetrics) => {
     const total = c.mensagensIniciadas + c.chatsInterrompidos;
     if (total === 0) return false;
     return (c.chatsInterrompidos / total) > 0.5;
@@ -39,7 +40,7 @@ export function ClientesGridView({ clients, onClickClient }: Props) {
 
   const counts = useMemo(() => {
     const ativos = clients.filter((c) => !c.inactive);
-    const problemas = ativos.filter((c) => c.spend > 0 && c.transferencias === 0 && !isBiaInterrompendo(c));
+    const problemas = ativos.filter((c) => c.spend > 0 && c.transferencias === 0 && !isCrcAtendendo(c));
     const melhores = ativos.filter((c) => c.transferencias > 0);
     return {
       todos: clients.length,
@@ -52,7 +53,7 @@ export function ClientesGridView({ clients, onClickClient }: Props) {
   const filtered = useMemo(() => {
     let base = clients;
     if (filtro === 'ativos') base = base.filter((c) => !c.inactive);
-    else if (filtro === 'problemas') base = base.filter((c) => !c.inactive && c.spend > 0 && c.transferencias === 0 && !isBiaInterrompendo(c));
+    else if (filtro === 'problemas') base = base.filter((c) => !c.inactive && c.spend > 0 && c.transferencias === 0 && !isCrcAtendendo(c));
     else if (filtro === 'melhores') base = base.filter((c) => !c.inactive && c.transferencias > 0);
 
     if (query.trim()) {
@@ -156,19 +157,20 @@ function ClienteCard({ cm, onClick }: { cm: ClientMetrics; onClick?: () => void 
   const cptTier = tierForCpt(cm.cpt);
   const colors = tierColorCpt(cptTier);
 
-  // Sintoma "Bia interrompendo": > 50% dos chats foram interrompidos.
-  // Indica problema no funil/script (nao do CS/gestor).
+  // Sinal "CRC atendendo": > 50% dos chats foram interrompidos pela CRC do
+  // cliente. A Bia esta sendo interrompida — atendimento manual prevalece.
+  // Nao da pra avaliar o funil da Bia nesse cenario.
   const totalInteracoes = cm.mensagensIniciadas + cm.chatsInterrompidos;
-  const biaInterrompendo = totalInteracoes > 0 && (cm.chatsInterrompidos / totalInteracoes) > 0.5;
+  const crcAtendendo = totalInteracoes > 0 && (cm.chatsInterrompidos / totalInteracoes) > 0.5;
 
-  // Classifica visualmente — prioridade: inativo > churn > bia parando > queimando > top
+  // Classifica visualmente — prioridade: inativo > churn > crc atendendo > queimando > top
   let statusBadge: { label: string; cls: string } | null = null;
   if (cm.inactive) {
     statusBadge = { label: 'inativo', cls: 'bg-burst-warning/15 text-burst-warning border-burst-warning/40' };
   } else if (cm.churned) {
     statusBadge = { label: 'churn', cls: 'bg-red-500/15 text-red-400 border-red-500/40' };
-  } else if (biaInterrompendo) {
-    statusBadge = { label: 'bia parando', cls: 'bg-purple-500/15 text-purple-300 border-purple-500/40' };
+  } else if (crcAtendendo) {
+    statusBadge = { label: 'crc atendeu', cls: 'bg-blue-500/15 text-blue-300 border-blue-500/40' };
   } else if (cm.spend > 0 && cm.transferencias === 0) {
     statusBadge = { label: 'queimando', cls: 'bg-red-500/15 text-red-400 border-red-500/40' };
   } else if (cm.transferencias > 0 && cm.cpt !== null && cm.cpt < 120) {
@@ -183,10 +185,10 @@ function ClienteCard({ cm, onClick }: { cm: ClientMetrics; onClick?: () => void 
   } else if (cm.churned) {
     borderCls = 'border-red-500/50';
     glowCls = 'shadow-[0_0_20px_rgba(239,68,68,0.15)]';
-  } else if (biaInterrompendo) {
-    // Roxo pra diferenciar do "queimando" — sinaliza problema do Bia
-    borderCls = 'border-purple-500/50';
-    glowCls = 'shadow-[0_0_20px_rgba(168,85,247,0.15)]';
+  } else if (crcAtendendo) {
+    // Azul = atendimento manual (nao e bom nem ruim — e neutro)
+    borderCls = 'border-blue-500/50';
+    glowCls = 'shadow-[0_0_20px_rgba(59,130,246,0.15)]';
   } else if (cm.spend > 0 && cm.transferencias === 0) {
     borderCls = 'border-red-500/50';
     glowCls = 'shadow-[0_0_20px_rgba(239,68,68,0.15)]';
@@ -215,7 +217,7 @@ function ClienteCard({ cm, onClick }: { cm: ClientMetrics; onClick?: () => void 
           <span className={`shrink-0 text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded border ${statusBadge.cls} flex items-center gap-1`}>
             {statusBadge.label === 'churn' && <UserX size={9} />}
             {statusBadge.label === 'queimando' && <AlertTriangle size={9} />}
-            {statusBadge.label === 'bia parando' && <PhoneOff size={9} />}
+            {statusBadge.label === 'crc atendeu' && <UserCheck size={9} />}
             {statusBadge.label === 'top' && <Trophy size={9} />}
             {statusBadge.label}
           </span>
@@ -257,16 +259,18 @@ function ClienteCard({ cm, onClick }: { cm: ClientMetrics; onClick?: () => void 
         </div>
       </div>
 
-      {/* Alerta de chats interrompidos — quando relevante */}
+      {/* Linha de info de chats interrompidos pela CRC.
+          "Chat interrompido" = CRC do cliente pegou o atendimento manualmente
+          (a Bia foi interrompida). Nao e bom nem ruim — e atendimento manual. */}
       {cm.chatsInterrompidos > 0 && (
         <div className="flex items-center gap-1.5 text-[10px] pt-1.5 mb-1">
-          <PhoneOff size={10} className={biaInterrompendo ? 'text-purple-300' : 'text-burst-muted/70'} />
-          <span className={biaInterrompendo ? 'text-purple-300 font-semibold' : 'text-burst-muted/80'}>
-            {cm.chatsInterrompidos} chat(s) interrompido(s)
+          <UserCheck size={10} className={crcAtendendo ? 'text-blue-300' : 'text-burst-muted/70'} />
+          <span className={crcAtendendo ? 'text-blue-300 font-semibold' : 'text-burst-muted/80'}>
+            CRC atendeu {cm.chatsInterrompidos} chat(s)
           </span>
-          {biaInterrompendo && (
-            <span className="text-purple-300/70 italic">
-              · problema do Bia
+          {crcAtendendo && (
+            <span className="text-blue-300/70 italic">
+              · atendimento manual
             </span>
           )}
         </div>
