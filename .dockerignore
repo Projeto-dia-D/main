@@ -1,0 +1,29 @@
+# Coisas que NAO precisam ir pro contexto de build (mais rapido + mais seguro)
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.local
+.env.bak-*
+*.log
+.DS_Store
+.claude/
+.vscode/
+.idea/
+tsconfig.tsbuildinfo
+tsconfig.node.tsbuildinfo
+
+# Scripts de sync — nao precisam ir pro container do frontend
+scripts/
+
+# Documentos auxiliares
+README.md
+CLAUDE.md
+
+# Logs e dumps
+logs/
+ativos.json
+links_all.json
+duvida_acoes.json
+duvida_tecnica.json
