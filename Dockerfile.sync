@@ -1,0 +1,29 @@
+# =============================================================================
+# Dockerfile pro servico de sync (Python) — Monday/WhatsApp -> Supabase
+# =============================================================================
+# Roda continuamente em loop: a cada 15 min executa `sync_monday_to_supabase.py
+# --mode=auto`. O proprio script tem logica interna pra slow sync (a cada 60 min)
+# e delta (sempre).
+#
+# Substitui o Task Scheduler do Windows (que dependia do PC ligado).
+# Logs vao pro stdout/stderr → visualizar no painel do EasyPanel.
+# =============================================================================
+
+FROM python:3.11-alpine
+
+WORKDIR /app
+
+# Dependencia unica do sync (requests faz tudo via HTTP)
+RUN pip install --no-cache-dir requests==2.32.3
+
+# Copia os scripts pra dentro do container
+COPY scripts/ ./scripts/
+
+# EasyPanel cria o .env automaticamente em /app/.env quando voce ativa
+# "Criar arquivo .env" no painel — o script ja le de ../ (de dentro de
+# scripts/, sobe um nivel) entao funciona certinho.
+
+# Loop infinito: roda o sync, dorme 15 min, repete.
+# Se o sync crashar, o `|| true` impede o container morrer — proxima iteracao
+# tenta de novo. Util pra resilencia contra blips do Monday/Supabase.
+CMD ["sh", "-c", "while true; do echo '=== Sync iniciado em '$(date)' ==='; python -u scripts/sync_monday_to_supabase.py --mode=auto || echo '!!! Sync falhou — tentando de novo em 15min'; echo '=== Aguardando 15 min ==='; sleep 900; done"]

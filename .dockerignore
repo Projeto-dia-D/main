@@ -14,8 +14,10 @@ dist
 tsconfig.tsbuildinfo
 tsconfig.node.tsbuildinfo
 
-# Scripts de sync — nao precisam ir pro container do frontend
-scripts/
+# Nota: scripts/ NAO esta ignorado pois o Dockerfile.sync precisa dele.
+# Pro Dockerfile (frontend) os arquivos sao copiados mas nao vao pro stage
+# final (so o /dist do builder vai). Nao tem custo real, so ~16MB extras
+# no contexto de build.
 
 # Documentos auxiliares
 README.md
