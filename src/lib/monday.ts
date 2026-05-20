@@ -881,19 +881,72 @@ export async function fetchBiaFaseTimeline(
 }
 
 /**
+ * Threshold de "staleness" do sync — se a ultima atualizacao do
+ * Supabase foi ha mais de X minutos, considera que o sync parou
+ * (PC desligado, task quebrada, etc.) e retorna vazio pra forcar
+ * fallback pro Monday GraphQL.
+ *
+ * 30 min = 2 ciclos de sync (que roda a cada 15 min). Se passou
+ * isso, algo ta errado com o sync.
+ */
+const SUPABASE_SYNC_STALE_MIN = 30;
+
+/**
+ * Verifica se o sync do Supabase ta atualizado o suficiente pra ser
+ * usado. Le `monday_sync_meta[key].updated_at` e compara com agora.
+ *
+ * Retorna `true` se o sync ta "fresco" (< SUPABASE_SYNC_STALE_MIN min).
+ * Retorna `false` se:
+ *   - O key nao existe (sync nunca rodou)
+ *   - O updated_at e mais antigo que o threshold
+ *   - Qualquer erro de conexao com Supabase
+ *
+ * `false` significa "nao confie no Supabase, use Monday direto".
+ */
+async function isSupabaseSyncFresh(syncKey: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabase
+      .from('monday_sync_meta')
+      .select('updated_at')
+      .eq('key', syncKey)
+      .maybeSingle();
+    if (error || !data) return false;
+    const updatedAt = new Date(String((data as { updated_at: string }).updated_at));
+    if (isNaN(updatedAt.getTime())) return false;
+    const ageMin = (Date.now() - updatedAt.getTime()) / 60000;
+    return ageMin <= SUPABASE_SYNC_STALE_MIN;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Versao Supabase do fetchBiaFaseTimeline — le da tabela
  * `monday_bia_fase_timeline` (espelho mantido pelo script de sync
  * a cada 15 min). Drop-in replacement: mesma assinatura e mesmo shape
  * de retorno, mas em ~1 query rapida ao Supabase ao inves de ate 50
  * paginas de activity_logs do Monday GraphQL.
  *
- * Se a tabela nao existir ou der erro, retorna Map vazio — o caller
- * pode entao decidir fazer fallback pro Monday.
+ * Comportamento de fallback:
+ *   - Se o sync ta velho (> 30 min sem rodar) → retorna Map vazio
+ *     pra forcar o caller a chamar fetchBiaFaseTimeline (Monday).
+ *   - Se a tabela nao existir ou der erro → idem.
+ *   - Se o sync ta fresco → usa Supabase (rapido).
+ *
+ * Garante que o app SEMPRE tem dado atualizado, independente do
+ * estado do PC que roda o sync.
  */
 export async function fetchBiaFaseTimelineFromSupabase(
   sinceDays: number = 90
 ): Promise<Map<string, FaseTransition[]>> {
   const out = new Map<string, FaseTransition[]>();
+
+  // Aborta cedo se sync ta velho — caller cai pro Monday GraphQL.
+  if (!(await isSupabaseSyncFresh('bia_fase_timeline'))) {
+    console.info('[Supabase] sync de bia_fase_timeline stale/ausente → vai cair pro Monday');
+    return out;
+  }
+
   const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
 
   try {
