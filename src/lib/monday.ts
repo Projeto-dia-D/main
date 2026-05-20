@@ -1,4 +1,5 @@
 import { config } from '../config';
+import { supabase } from './supabase';
 
 const MONDAY_URL = 'https://api.monday.com/v2';
 const MONDAY_API_VERSION = '2024-01';
@@ -875,6 +876,58 @@ export async function fetchBiaFaseTimeline(
     }
   } catch (e) {
     console.warn('[Monday] falha ao buscar activity_logs:', e);
+  }
+  return out;
+}
+
+/**
+ * Versao Supabase do fetchBiaFaseTimeline — le da tabela
+ * `monday_bia_fase_timeline` (espelho mantido pelo script de sync
+ * a cada 15 min). Drop-in replacement: mesma assinatura e mesmo shape
+ * de retorno, mas em ~1 query rapida ao Supabase ao inves de ate 50
+ * paginas de activity_logs do Monday GraphQL.
+ *
+ * Se a tabela nao existir ou der erro, retorna Map vazio — o caller
+ * pode entao decidir fazer fallback pro Monday.
+ */
+export async function fetchBiaFaseTimelineFromSupabase(
+  sinceDays: number = 90
+): Promise<Map<string, FaseTransition[]>> {
+  const out = new Map<string, FaseTransition[]>();
+  const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
+
+  try {
+    // supabase-js default = 1000 rows max por query. Pagina pra cobrir
+    // periodos longos com muito movimento.
+    const PAGE = 1000;
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('monday_bia_fase_timeline')
+        .select('bia_item_id, prev_label, next_label, ts')
+        .gte('ts', since)
+        .order('ts', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      const rows = data ?? [];
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        const biaId = String((row as { bia_item_id: string | number }).bia_item_id);
+        if (!biaId) continue;
+        const arr = out.get(biaId) ?? [];
+        arr.push({
+          ts: String((row as { ts: string }).ts),
+          prev: ((row as { prev_label: string | null }).prev_label) ?? null,
+          next: ((row as { next_label: string | null }).next_label) ?? null,
+        });
+        out.set(biaId, arr);
+      }
+      if (rows.length < PAGE) break;
+      from += PAGE;
+    }
+    // Ja vem ordenado por ts asc pela query — nao precisa re-sortar.
+  } catch (e) {
+    console.warn('[Supabase] falha ao buscar monday_bia_fase_timeline:', e);
   }
   return out;
 }

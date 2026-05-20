@@ -3,6 +3,7 @@ import {
   fetchMondayClients,
   fetchBiaSoftData,
   fetchBiaFaseTimeline,
+  fetchBiaFaseTimelineFromSupabase,
   isClientNoBiaSoftById,
   type MondayClient,
   type FaseTransition,
@@ -135,11 +136,18 @@ export function useMondayClients(): UseMondayClientsResult {
 
     async function load() {
       try {
-        const [mainResult, biaData, biaTimelineRaw] = await Promise.all([
+        // Timeline da Bia agora le do Supabase (tabela espelho mantida pelo
+        // sync de 15 em 15 min). Cai pra ~1 query rapida em vez de ate 50
+        // paginas de activity_logs do Monday. Se vier vazio (tabela nao
+        // populada ainda), faz fallback pro GraphQL.
+        const [mainResult, biaData, biaTimelineSupa] = await Promise.all([
           fetchMondayClients(),
           fetchBiaSoftData(),
-          fetchBiaFaseTimeline(90), // últimos 90 dias de transições
+          fetchBiaFaseTimelineFromSupabase(90),
         ]);
+        const biaTimelineRaw = biaTimelineSupa.size > 0
+          ? biaTimelineSupa
+          : await fetchBiaFaseTimeline(90);
         if (!active) return;
         const filtered = mainResult.clients.filter((c) =>
           isClientNoBiaSoftById(c, biaData.allIds)
