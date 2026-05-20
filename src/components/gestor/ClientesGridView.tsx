@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Search, DollarSign, ArrowDownRight, UserX, Activity, AlertTriangle, Trophy, Users } from 'lucide-react';
+import { Search, DollarSign, ArrowDownRight, UserX, Activity, AlertTriangle, Trophy, Users, MessageCircle } from 'lucide-react';
 import type { ClientMetrics } from '../../lib/gestorMetrics';
 import { brl, tierColorCpt, tierForCpt } from '../../lib/gestorMetrics';
 
@@ -201,17 +201,18 @@ function ClienteCard({ cm, onClick }: { cm: ClientMetrics; onClick?: () => void 
         )}
       </div>
 
-      {/* Stats em linha — destaque pra transferencias */}
-      <div className="grid grid-cols-3 gap-2 mb-2">
-        <div className="rounded-lg bg-black/30 border border-burst-border px-2 py-1.5">
+      {/* Stats em linha — narrativa: Leads chegaram -> Transf -> Gasto -> CPT.
+          4 colunas pra mostrar a jornada completa do funil. */}
+      <div className="grid grid-cols-4 gap-1.5 mb-2">
+        <div className="rounded-lg bg-black/30 border border-burst-border px-1.5 py-1.5">
           <div className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-burst-muted">
-            <DollarSign size={9} /> Gasto
+            <MessageCircle size={9} /> Leads
           </div>
-          <div className={`font-mono text-xs ${cm.spend > 0 ? 'text-white' : 'text-burst-muted'}`}>
-            {brl(cm.spend)}
+          <div className={`font-display text-base ${cm.mensagensIniciadas > 0 ? 'text-white' : 'text-burst-muted'}`}>
+            {cm.mensagensIniciadas}
           </div>
         </div>
-        <div className="rounded-lg bg-black/30 border border-burst-border px-2 py-1.5">
+        <div className="rounded-lg bg-black/30 border border-burst-border px-1.5 py-1.5">
           <div className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-burst-muted">
             <ArrowDownRight size={9} /> Transf.
           </div>
@@ -219,7 +220,15 @@ function ClienteCard({ cm, onClick }: { cm: ClientMetrics; onClick?: () => void 
             {cm.transferencias}
           </div>
         </div>
-        <div className={`rounded-lg border px-2 py-1.5 ${colors.bg} ${colors.border}`}>
+        <div className="rounded-lg bg-black/30 border border-burst-border px-1.5 py-1.5">
+          <div className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-burst-muted">
+            <DollarSign size={9} /> Gasto
+          </div>
+          <div className={`font-mono text-xs ${cm.spend > 0 ? 'text-white' : 'text-burst-muted'}`}>
+            {brl(cm.spend)}
+          </div>
+        </div>
+        <div className={`rounded-lg border px-1.5 py-1.5 ${colors.bg} ${colors.border}`}>
           <div className="flex items-center gap-1 text-[9px] uppercase tracking-wider text-burst-muted">
             CPT
           </div>
