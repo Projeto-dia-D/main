@@ -10,17 +10,21 @@ import { Design } from './components/tabs/Design';
 import { Calendario } from './components/tabs/Calendario';
 import { useMondayClients } from './hooks/useMondayClients';
 import { readCurrentUser, writeCurrentUser, type AuthUser } from './lib/auth';
-import { UserContext } from './lib/userContext';
+import { UserContext, hasFullAccess } from './lib/userContext';
 import { PhotoLightboxProvider } from './components/PhotoLightboxContext';
 import { NotificationsProvider } from './lib/notificationsContext';
 import { Notificacoes } from './components/tabs/Notificacoes';
+import { SaudeCliente } from './components/tabs/SaudeCliente';
+import { Apresentacao } from './components/tabs/Apresentacao';
 
 const TAB_TITLES: Record<TabKey, string> = {
+  apresentacao: 'Apresentação',
   programacao: 'Programação',
   design: 'Design',
   cs: 'CS',
   gestor: 'Gestor de Tráfego',
   calendario: 'Calendário',
+  saude: 'Saúde do Cliente',
   notificacoes: 'Notificações',
 };
 
@@ -33,7 +37,15 @@ const ROLE_LABEL = {
 } as const;
 
 export default function App() {
-  const [active, setActive] = useState<TabKey>('programacao');
+  const [user, setUser] = useState<AuthUser | null>(() => readCurrentUser());
+
+  // Default da tab: Apresentação pra admins, Programação pra todos os outros.
+  // O F5 sempre cai aqui — a aba inicial é determinística por role.
+  // (Se quiser deixar o user trocar e o F5 manter, basta substituir esse
+  // useState pela versão com localStorage abaixo.)
+  const defaultTab: TabKey = user && hasFullAccess(user) ? 'apresentacao' : 'programacao';
+  const [active, setActive] = useState<TabKey>(defaultTab);
+
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem('sidebar:collapsed') === '1';
@@ -41,8 +53,6 @@ export default function App() {
       return false;
     }
   });
-
-  const [user, setUser] = useState<AuthUser | null>(() => readCurrentUser());
 
   // Só carrega Monday se autenticado (pra evitar requisições no login screen)
   const monday = useMondayClients();
@@ -149,6 +159,8 @@ export default function App() {
             {active === 'cs' && <CS />}
             {active === 'gestor' && <GestorTrafego />}
             {active === 'calendario' && <Calendario />}
+            {active === 'saude' && <SaudeCliente />}
+            {active === 'apresentacao' && <Apresentacao />}
             {active === 'notificacoes' && <Notificacoes />}
           </div>
         </main>
