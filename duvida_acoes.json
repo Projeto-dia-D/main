@@ -1,0 +1,46 @@
+{
+  "deletar": [
+    {
+      "n": 1,
+      "id": "9391ad2b-f7c1-4b0a-b6be-9857bba6e3a0",
+      "nome": "Dra. Jaqueline Rippel"
+    },
+    {
+      "n": 9,
+      "id": "23e65d3e-1ecc-4528-be50-79e614b18941",
+      "nome": "Dra. Carolina Teixeira"
+    },
+    {
+      "n": 10,
+      "id": "e27021b4-ace6-4716-bb71-951b71301fe5",
+      "nome": "Dra. Ádila Maciel"
+    },
+    {
+      "n": 11,
+      "id": "d9476a8d-b6af-4c36-87c2-f43b7cd31c26",
+      "nome": "Dra. Mayara Ventura"
+    }
+  ],
+  "reclassificar": [
+    {
+      "n": 4,
+      "id": "ac611073-0ed0-4548-a687-281e9ff5a0e1",
+      "nome": "Dra. Carolina Teixeira"
+    },
+    {
+      "n": 5,
+      "id": "0bdad291-80e3-425d-80ce-9d340669540e",
+      "nome": "Dr. Anderson Tardelli"
+    },
+    {
+      "n": 6,
+      "id": "905d60df-255c-4de5-b71c-3741b23587f4",
+      "nome": "Renan Serra Selvatici"
+    },
+    {
+      "n": 12,
+      "id": "f83c5110-0a35-4af0-93a3-4e36c3991cc8",
+      "nome": "Dra. Mayara Ventura"
+    }
+  ]
+}
