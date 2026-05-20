@@ -24,7 +24,9 @@ type FiltroVisao = 'todos' | 'ativos' | 'problemas' | 'melhores';
  */
 export function ClientesGridView({ clients, onClickClient }: Props) {
   const [query, setQuery] = useState('');
-  const [filtro, setFiltro] = useState<FiltroVisao>('todos');
+  // Default = 'ativos' — abre mostrando so quem ta valendo no projeto.
+  // Pra ver inativos/churn, usuario clica em "Todos" no chip de cima.
+  const [filtro, setFiltro] = useState<FiltroVisao>('ativos');
 
   const counts = useMemo(() => {
     const ativos = clients.filter((c) => !c.inactive);
