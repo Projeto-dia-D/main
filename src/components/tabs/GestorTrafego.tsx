@@ -11,7 +11,6 @@ import { computeGestorMetrics } from '../../lib/gestorMetrics';
 import { LeadsTable } from '../programacao/LeadsTable';
 import { TransferidosTable } from '../programacao/TransferidosTable';
 import { isClientChurned, nameMatchesScope } from '../../lib/monday';
-import { DoutoresList } from '../gestor/DoutoresList';
 import { useUser, hasFullAccess } from '../../lib/userContext';
 import { ViewAsTab } from '../ViewAsTab';
 import { useUserPhotos } from '../../hooks/useUserPhotos';
@@ -22,7 +21,6 @@ import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
 import { Modal } from '../Modal';
 import { PainelGeralGestor } from '../gestor/PainelGeralGestor';
 import { PainelMiniGestor } from '../gestor/PainelMiniGestor';
-import { GestorCard } from '../gestor/GestorCard';
 import { PerfilPessoalGestor } from '../gestor/PerfilPessoalGestor';
 import { ClientesTable } from '../gestor/ClientesTable';
 import { CampanhasTable } from '../gestor/CampanhasTable';
@@ -31,6 +29,7 @@ import { GestoresTable } from '../gestor/GestoresTable';
 import { VinculacoesModal } from '../gestor/VinculacoesModal';
 import { DiagnosticoOrfaos } from '../gestor/DiagnosticoOrfaos';
 import { DiagnosticoCampanhasOrfas } from '../gestor/DiagnosticoCampanhasOrfas';
+import { DoutoresSemVinculoMeta } from '../gestor/DoutoresSemVinculoMeta';
 
 type ModalKind = 'clientes' | 'campanhas' | 'gestores' | 'vinculos' | null;
 
@@ -41,8 +40,6 @@ export function GestorTrafego() {
   // Aba abre por padrão filtrada pelo período "Dia D" (dia 12 do mês até hoje)
   const [range, setRange] = useState<DateRange>(() => diaDRange());
   const [openModal, setOpenModal] = useState<ModalKind>(null);
-  // Nome do gestor selecionado para drill-down com todos os seus clientes/doutores
-  const [selectedGestor, setSelectedGestor] = useState<string | null>(null);
   // Drill-down por métrica do gestor: mensagens | transferencias | spend
   const [drillGestor, setDrillGestor] = useState<{
     gestor: string;
@@ -53,7 +50,7 @@ export function GestorTrafego() {
   // Drill em UM cliente específico
   const [drillClient, setDrillClient] = useState<{ clientId: string; gestorNome: string } | null>(null);
   const { lookup: lookupPhoto } = useUserPhotos();
-  const { report: reportNotification, dismiss: dismissNotification } = useNotifications();
+  const { report: reportNotification, resolve: resolveNotification } = useNotifications();
 
   const { leads, loading: leadsLoading, error: leadsError } = useLeads();
   const {
@@ -211,6 +208,7 @@ export function GestorTrafego() {
         cpt: null,
         campaigns: [],
         leads: [],
+        allLeads: [],
         churned: false,
         churnCutoff: null,
         inactive: false,
@@ -257,25 +255,25 @@ export function GestorTrafego() {
     if (leadsError) {
       reportNotification({ id: 'supabase-leads', level: 'error', source: 'Supabase', message: leadsError });
     } else {
-      dismissNotification('supabase-leads');
+      resolveNotification('supabase-leads');
     }
-  }, [leadsError, reportNotification, dismissNotification]);
+  }, [leadsError, reportNotification, resolveNotification]);
 
   useEffect(() => {
     if (mondayError) {
       reportNotification({ id: 'monday-clients', level: 'error', source: 'Monday', message: mondayError });
     } else {
-      dismissNotification('monday-clients');
+      resolveNotification('monday-clients');
     }
-  }, [mondayError, reportNotification, dismissNotification]);
+  }, [mondayError, reportNotification, resolveNotification]);
 
   useEffect(() => {
     if (linksError) {
       reportNotification({ id: 'meta-links', level: 'error', source: 'Vínculos', message: linksError });
     } else {
-      dismissNotification('meta-links');
+      resolveNotification('meta-links');
     }
-  }, [linksError, reportNotification, dismissNotification]);
+  }, [linksError, reportNotification, resolveNotification]);
 
   useEffect(() => {
     // metaErrors é um array — cada erro vira uma notificação com id derivado
@@ -383,6 +381,15 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
         </div>
       )}
 
+      {/* Banner: doutores ATIVOS (não churn/pausa/jurídico) sem vínculo Meta */}
+      {!linksMissingTable && !mondayLoading && mondayAllClients.length > 0 && (
+        <DoutoresSemVinculoMeta
+          allClients={mondayAllClients}
+          links={links}
+          onAbrirVinculacoes={() => setOpenModal('vinculos')}
+        />
+      )}
+
       {showLoadingOverlay ? (
         <div className="flex items-center justify-center min-h-[40vh]">
           <div className="text-center">
@@ -452,38 +459,6 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
                     )}
                   </div>
                 </div>
-              )}
-
-              {summary.gestores.length > 0 && (
-                <section>
-                  <div className="flex items-center gap-2 mb-4">
-                    <Users className="text-burst-orange-bright" size={20} />
-                    <h3 className="font-display text-xl tracking-wider text-white">
-                      Análise por Gestor
-                    </h3>
-                    <span className="text-xs text-burst-muted">
-                      {summary.gestores.length} gestor(es)
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                    {summary.gestores.map((g) => (
-                      <GestorCard
-                        key={g.gestor}
-                        gestor={g}
-                        onClick={() => setSelectedGestor(g.gestor)}
-                        onClickMensagens={() =>
-                          setDrillGestor({ gestor: g.gestor, type: 'mensagens' })
-                        }
-                        onClickTransferencias={() =>
-                          setDrillGestor({ gestor: g.gestor, type: 'transferencias' })
-                        }
-                        onClickSpend={() =>
-                          setDrillGestor({ gestor: g.gestor, type: 'spend' })
-                        }
-                      />
-                    ))}
-                  </div>
-                </section>
               )}
 
               {summary.orfaos.length > 0 && (
@@ -592,22 +567,6 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
           links={links}
           onLink={setLink}
           onUnlink={removeLink}
-        />
-      </Modal>
-
-      {/* Drill-down: clica num gestor → mostra TODOS os doutores dele */}
-      <Modal
-        open={selectedGestor !== null}
-        onClose={() => setSelectedGestor(null)}
-        title={selectedGestor ? `Doutores de ${selectedGestor}` : ''}
-        subtitle={(() => {
-          const g = summary.gestores.find((g) => g.gestor === selectedGestor);
-          if (!g) return '';
-          return `${g.clients.length} doutor(es) • ${g.totalTransferencias} transferência(s) • CPT ${g.cpt === null ? '—' : `R$ ${g.cpt.toFixed(2)}`}`;
-        })()}
-      >
-        <DoutoresList
-          clients={summary.gestores.find((g) => g.gestor === selectedGestor)?.clients ?? []}
         />
       </Modal>
 

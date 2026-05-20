@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { MessageCircle, ArrowDownRight, DollarSign } from 'lucide-react';
 import { brl, type ClientMetrics } from '../../lib/gestorMetrics';
-import { isTransferido } from '../../lib/metrics';
+import { isTransferido, isInterrompido, isChatIncompleto, isDesclassificado } from '../../lib/metrics';
 import { AnimatedNumber } from '../AnimatedNumber';
 import { LeadsTable } from '../programacao/LeadsTable';
 import { TransferidosTable } from '../programacao/TransferidosTable';
@@ -21,7 +21,14 @@ type Tab = 'leads' | 'transferencias' | 'campanhas';
  */
 export function ClienteDrilldown({ cm }: Props) {
   const [tab, setTab] = useState<Tab>('leads');
+  // allLeads inclui interrompidos/incompletos/desclassificados (pra visibilidade
+  // na tabela). cm.leads é o filtrado (usado nas métricas).
+  const todasMensagens = cm.allLeads ?? cm.leads;
   const transferidos = cm.leads.filter(isTransferido);
+  const interrompidos = todasMensagens.filter(isInterrompido).length;
+  const incompletos = todasMensagens.filter(isChatIncompleto).length;
+  const desclassificados = todasMensagens.filter(isDesclassificado).length;
+  const excluidos = interrompidos + incompletos + desclassificados;
 
   return (
     <div className="flex flex-col gap-4">
@@ -30,9 +37,10 @@ export function ClienteDrilldown({ cm }: Props) {
         <StatTab
           icon={<MessageCircle size={13} />}
           label="Mensagens"
-          value={cm.mensagensIniciadas}
+          value={todasMensagens.length}
           active={tab === 'leads'}
           onClick={() => setTab('leads')}
+          subText={excluidos > 0 ? `${cm.mensagensIniciadas} ativas + ${excluidos} excluídas` : undefined}
         />
         <StatTab
           icon={<ArrowDownRight size={13} />}
@@ -69,9 +77,20 @@ export function ClienteDrilldown({ cm }: Props) {
         )}
       </div>
 
+      {/* Detalhamento da quebra dos leads — visível só na tab de Mensagens */}
+      {tab === 'leads' && excluidos > 0 && (
+        <div className="rounded-lg bg-black/30 border border-burst-border px-3 py-2 text-[11px] text-burst-muted flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span><strong className="text-white">{todasMensagens.length}</strong> mensagens recebidas:</span>
+          <span><span className="text-green-400 font-mono">{cm.mensagensIniciadas}</span> ativas</span>
+          {interrompidos > 0 && <span><span className="text-burst-warning font-mono">{interrompidos}</span> chat interrompido</span>}
+          {incompletos > 0 && <span><span className="text-burst-muted font-mono">{incompletos}</span> chat incompleto</span>}
+          {desclassificados > 0 && <span><span className="text-red-400 font-mono">{desclassificados}</span> desclassificadas</span>}
+        </div>
+      )}
+
       {/* Conteúdo da tab */}
       <div className="border-t border-burst-border pt-4">
-        {tab === 'leads' && <LeadsTable leads={cm.leads} />}
+        {tab === 'leads' && <LeadsTable leads={todasMensagens} />}
         {tab === 'transferencias' && <TransferidosTable leads={transferidos} />}
         {tab === 'campanhas' && <CampanhasTable insights={cm.campaigns} />}
       </div>
@@ -87,6 +106,7 @@ function StatTab({
   active,
   onClick,
   accent,
+  subText,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -95,6 +115,7 @@ function StatTab({
   active: boolean;
   onClick: () => void;
   accent?: boolean;
+  subText?: string;
 }) {
   return (
     <button
@@ -119,6 +140,9 @@ function StatTab({
         <span className={`font-display text-2xl ${accent ? 'text-burst-orange-bright' : 'text-white'}`}>
           {valueText}
         </span>
+      )}
+      {subText && (
+        <span className="text-[10px] text-burst-muted/80 truncate w-full">{subText}</span>
       )}
     </button>
   );

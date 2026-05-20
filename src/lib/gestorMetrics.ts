@@ -8,6 +8,7 @@ import {
   isInterrompido,
   isChatIncompleto,
   isNomeChatIncompleto,
+  isDesclassificado,
 } from './metrics';
 import { isGestorExcluido } from '../config';
 import {
@@ -27,7 +28,11 @@ export interface ClientMetrics {
   mensagensIniciadas: number;           // total de leads (chats iniciados) do cliente
   cpt: number | null;                   // null se não há transferências
   campaigns: CampaignInsight[];         // campanhas Fim/Venda casadas
-  leads: RelatorioBias[];               // leads atribuídos a esse cliente (já com churn aplicado)
+  leads: RelatorioBias[];               // leads ATIVOS (excluindo chat interrompido/incompleto/desclassificado) — usado nas métricas
+  /** TODOS os leads do cliente, incluindo chat interrompido, incompleto e
+   *  desclassificado. Usado na tabela de mensagens em Gestor/CS — pra
+   *  visibilidade total. Métricas (transferências, CPT) continuam usando `leads`. */
+  allLeads: RelatorioBias[];
   churned: boolean;                     // status atual contém "perdido"/"churn"
   churnCutoff: Date | null;             // data de corte aplicada (se churned)
   /** Cliente está no board Bia Soft mas em fase NÃO ativa (Pausado, Churn, etc.).
@@ -251,9 +256,9 @@ export function computeGestorMetrics(opts: {
   // contar, precisa remover o nome da lista DOUTORES_CHAT_INCOMPLETO no código.
   const clients = opts.clients.filter((c) => !isNomeChatIncompleto(c.name));
 
-  // 1) Leads ativos (ignora chats interrompidos e chats incompletos)
+  // 1) Leads ativos (ignora chats interrompidos, incompletos e desclassificados)
   const activeLeads = leads.filter(
-    (l) => !isInterrompido(l) && !isChatIncompleto(l)
+    (l) => !isInterrompido(l) && !isChatIncompleto(l) && !isDesclassificado(l)
   );
   const doutoresUniqSet = new Set<string>();
   for (const l of activeLeads) {
@@ -310,26 +315,31 @@ export function computeGestorMetrics(opts: {
   // 5) Constrói ClientMetrics — vínculo Supabase: token uazapi > nome
   const clientMetrics: ClientMetrics[] = clients.map((cl) => {
     let matchVia: ClientMetrics['matchVia'] = null;
-    let leadsDoCliente: RelatorioBias[] = [];
+    // allLeadsDoCliente = TODOS os leads (incluindo interrompidos, incompletos
+    // e desclassificados) — usado na tabela de mensagens do drill pra dar
+    // visibilidade total.
+    // leadsDoCliente = ATIVOS apenas — usado nas métricas (transferências, CPT).
+    let allLeadsDoCliente: RelatorioBias[] = [];
     let doutorMatch: string | null = null;
 
     if (cl.uazapiToken) {
       const token = cl.uazapiToken.trim();
-      leadsDoCliente = activeLeads.filter((l) => l.token === token);
+      // Usa `leads` (não filtrado) — depois aplica filtro pros ativos
+      allLeadsDoCliente = leads.filter((l) => l.token === token);
       // doutorMatch para exibição: pega o nome mais frequente desses leads
       const counts = new Map<string, number>();
-      for (const l of leadsDoCliente) {
+      for (const l of allLeadsDoCliente) {
         const n = l.nomeDoutor?.trim();
         if (n) counts.set(n, (counts.get(n) ?? 0) + 1);
       }
       const top = Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0];
-      doutorMatch = top?.[0] ?? cl.name; // se nenhum lead tem nomeDoutor, usa o nome do cliente
+      doutorMatch = top?.[0] ?? cl.name;
       matchVia = 'token';
     } else {
       const nm = findDoutorMatch(cl.name, doutoresUniq);
       if (nm) {
         doutorMatch = nm;
-        leadsDoCliente = activeLeads.filter((l) => l.nomeDoutor?.trim() === nm);
+        allLeadsDoCliente = leads.filter((l) => l.nomeDoutor?.trim() === nm);
         matchVia = 'nome';
       }
     }
@@ -338,17 +348,15 @@ export function computeGestorMetrics(opts: {
     // Adiciona leads desses doutores (dedupe por id no fim).
     const manualLinks = doutorLinks?.get(cl.id) ?? [];
     if (manualLinks.length > 0) {
-      const seen = new Set(leadsDoCliente.map((l) => l.id));
+      const seen = new Set(allLeadsDoCliente.map((l) => l.id));
       for (const link of manualLinks) {
         const dname = link.doutor_name.trim();
-        const extras = activeLeads.filter(
+        const extras = leads.filter(
           (l) => l.nomeDoutor?.trim() === dname && !seen.has(l.id)
         );
         for (const e of extras) seen.add(e.id);
-        leadsDoCliente.push(...extras);
+        allLeadsDoCliente.push(...extras);
       }
-      // se ainda não temos doutorMatch (cliente sem token e sem name-match),
-      // assume o primeiro doutor vinculado manualmente
       if (!doutorMatch && manualLinks[0]) {
         doutorMatch = manualLinks[0].doutor_name;
         matchVia = matchVia ?? 'nome';
@@ -360,10 +368,16 @@ export function computeGestorMetrics(opts: {
     const churned = isClientChurned(cl);
     if (churnCutoff) {
       const cutoffMs = churnCutoff.getTime();
-      leadsDoCliente = leadsDoCliente.filter(
+      allLeadsDoCliente = allLeadsDoCliente.filter(
         (l) => new Date(l.dataCadastro).getTime() <= cutoffMs
       );
     }
+
+    // Deriva leads ATIVOS (filtra interrompido/incompleto/desclassificado) pra
+    // usar nas métricas — transferências, CPT, etc.
+    const leadsDoCliente = allLeadsDoCliente.filter(
+      (l) => !isInterrompido(l) && !isChatIncompleto(l) && !isDesclassificado(l)
+    );
 
     const transferencias = leadsDoCliente.filter(isTransferido).length;
     const mensagensIniciadas = leadsDoCliente.length;
@@ -437,6 +451,7 @@ export function computeGestorMetrics(opts: {
       cpt,
       campaigns,
       leads: leadsDoCliente,
+      allLeads: allLeadsDoCliente,
       churned,
       churnCutoff,
       inactive: !isClienteAtivo(cl),

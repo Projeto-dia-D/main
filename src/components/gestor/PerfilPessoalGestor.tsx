@@ -82,12 +82,12 @@ export function PerfilPessoalGestor({
       })
       .slice(0, 5);
 
+    // Piores: ordena por SPEND desc — quem gastou mais sem retorno é o pior.
+    // Empate em spend cai pra CPT desc (mais caro pior).
     const piores = [...ativos]
       .filter((c) => c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 170))
       .sort((a, b) => {
-        const aBad = a.transferencias === 0;
-        const bBad = b.transferencias === 0;
-        if (aBad !== bBad) return aBad ? -1 : 1;
+        if (b.spend !== a.spend) return b.spend - a.spend;
         return (b.cpt ?? 0) - (a.cpt ?? 0);
       })
       .slice(0, 5);
