@@ -44,6 +44,15 @@ export function Design() {
     [eventosVisiveis, range, holidaySet, atestados]
   );
 
+  // === SUMMARY GERAL (sem scope filter) — pra ranking comparativo do time ===
+  // Designer ve seus numeros pessoais via `summary`, mas o RankingDesigners
+  // precisa mostrar TODOS os designers (pra ele saber onde se encaixa em
+  // produtividade/qualidade no time).
+  const summaryGeral = useMemo(
+    () => computeDesignMetrics(eventos, range, holidaySet, atestados),
+    [eventos, range, holidaySet, atestados]
+  );
+
   // === GUARD ===
   // Acesso permitido apenas para:
   //  - hasFullAccess (admin Renan/Vanessa, super programador Gabriel/Eduardo)
@@ -158,7 +167,9 @@ export function Design() {
         </div>
       )}
 
-      <RankingDesigners designers={summary.designers} />
+      {/* Ranking usa summaryGeral (TODOS designers do time) — designer ve
+          onde ele se encaixa em vez de comparar com ele mesmo. */}
+      <RankingDesigners designers={summaryGeral.designers} />
 
       {summary.eventosSemDesigner.length > 0 && (
         <button

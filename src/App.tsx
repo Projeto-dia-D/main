@@ -39,11 +39,21 @@ const ROLE_LABEL = {
 export default function App() {
   const [user, setUser] = useState<AuthUser | null>(() => readCurrentUser());
 
-  // Default da tab: Apresentação pra admins, Programação pra todos os outros.
-  // O F5 sempre cai aqui — a aba inicial é determinística por role.
-  // (Se quiser deixar o user trocar e o F5 manter, basta substituir esse
-  // useState pela versão com localStorage abaixo.)
-  const defaultTab: TabKey = user && hasFullAccess(user) ? 'apresentacao' : 'programacao';
+  // Default da tab por role — cada um cai no painel mais util pra ele:
+  //   admin / super programador → Apresentação (dashboard TV)
+  //   gestor → Gestor de Tráfego
+  //   cs → CS
+  //   designer → Design
+  //   programador → Programação
+  //   outros / sem role → Programação (fallback seguro)
+  const defaultTab: TabKey = (() => {
+    if (!user) return 'programacao';
+    if (hasFullAccess(user)) return 'apresentacao';
+    if (user.role === 'gestor') return 'gestor';
+    if (user.role === 'cs') return 'cs';
+    if (user.role === 'designer') return 'design';
+    return 'programacao';
+  })();
   const [active, setActive] = useState<TabKey>(defaultTab);
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
