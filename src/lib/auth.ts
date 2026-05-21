@@ -201,14 +201,23 @@ export function validatePassword(plain: string): string | null {
 }
 
 /** Emails ADMIN — veem tudo + ROLE label "Admin".
- *  Confirmado no Monday em 21/05/2026:
- *    - Renan Rafaeli (ID 29142665, Gestor de Projetos) → renan@burstmidia.com
- *    - Vanessa Rocha (ID 43372550) → vanessarocha@burstmidia.com
+ *  Deve coincidir com os usuários marcados como 'admin' em
+ *  TEAM_ROLES dentro de scripts/sync_monday_to_supabase.py.
+ *
+ *  Confirmado no Monday (/users):
+ *    - Renan Rafaeli      → renan@burstmidia.com
+ *    - Vanessa Rocha      → vanessarocha@burstmidia.com
+ *    - Rone Matheus       → ronematheus@burstmidia.com
+ *    - João Vitor Velho   → joaovitor@burstmidia.com
+ *    - João Vitor Velho 2 → joaovitorvelho@burstmidia.com
  */
 export const ADMIN_EMAILS = new Set<string>(
   [
     'renan@burstmidia.com',
     'vanessarocha@burstmidia.com',
+    'ronematheus@burstmidia.com',
+    'joaovitor@burstmidia.com',
+    'joaovitorvelho@burstmidia.com',
   ].map((e) => e.toLowerCase())
 );
 

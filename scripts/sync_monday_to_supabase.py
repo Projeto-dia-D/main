@@ -974,175 +974,111 @@ def sync_item_updates() -> dict:
 
 
 def sync_auth_emails() -> dict:
-    """Sync de emails de CS/Gestor/Programador/Designer.
+    """Sync de emails+roles do time — lista hardcoded.
 
-    Usa Monday /users como SOURCE OF TRUTH dos emails (sem typos), cruzando
-    com o board Bia Soft pra detectar role por nome:
-      - Bia Soft tem: nome do CS / Gestor / Programador (colunas mirror+person)
-      - Monday /users tem: nome + EMAIL REAL de cada usuario
-      - Match por nome normalizado: name(BiaSoft) ↔ name(Monday)
-      - Email final = email do Monday (no caso do BiaSoft ter typo no email).
+    A app tem time pequeno (~20 pessoas) e role estavel. Em vez de tentar
+    detectar role automaticamente (que falha — Bia Soft tem typos, title
+    Monday e incompleto), mantemos uma LISTA UNICA hardcoded aqui.
 
-    Adicionalmente: usuarios do Monday com title contendo "Gestor", "CS",
-    "Designer", "Programador" (e que NAO apareceram no Bia Soft) tambem
-    entram como role detectado pelo title.
+    Funcionamento:
+      1. Lista TEAM_ROLES define email → role pra cada membro.
+      2. Sync valida via Monday /users que o email ainda existe e pega o
+         nome real (no caso do nome no Monday ter mudado).
+      3. Upsert em monday_auth_emails com (email, name, role).
 
-    Vantagem sobre a versao anterior: emails sempre validos, mesmo se
-    alguem typar errado a coluna de email no Bia Soft.
+    Quando alguem entra/sai: edita TEAM_ROLES + commit + sync.
+
+    Roles:
+      - admin       : acesso total (Renan, Vanessa, Rone, Joao Velho)
+      - gestor      : ve so seus clientes
+      - cs          : ve so seus clientes
+      - designer    : ve so seus eventos de design
+      - programador : ve todos os setores (sem Saude/Notificacoes)
     """
-    import re, unicodedata
-    print('\n>>> SYNC: monday_auth_emails (Monday /users + Bia Soft cross-ref)')
+    print('\n>>> SYNC: monday_auth_emails (lista hardcoded + validacao Monday)')
 
-    def normalize_name(s: str | None) -> str:
-        if not s: return ''
-        s = unicodedata.normalize('NFD', s)
-        s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
-        return re.sub(r'\s+', ' ', s).strip().lower()
+    # =========================================================================
+    # LISTA OFICIAL DO TIME
+    # =========================================================================
+    # Quando alguem entra/sai: edita aqui, faz commit, roda o sync.
+    TEAM_ROLES: dict[str, str] = {
+        # --- ADMIN (acesso total) ---
+        'renan@burstmidia.com':           'admin',
+        'vanessarocha@burstmidia.com':    'admin',
+        'ronematheus@burstmidia.com':     'admin',
+        'joaovitor@burstmidia.com':       'admin',
+        'joaovitorvelho@burstmidia.com':  'admin',
 
-    # ---- 1. Lista TODOS os usuarios do Monday ----
-    print('  buscando Monday /users...')
-    users_resp = gql('{ users(limit: 500) { id name email title enabled } }', {})
+        # --- CS ---
+        'annecamargo@burstmidia.com':     'cs',
+        'julia@burstmidia.com':           'cs',
+        'lilian@burstmidia.com':          'cs',
+        'paulasouza@burstmidia.com':      'cs',
+        'yasminxavier@burstmidia.com':    'cs',
+
+        # --- Gestor de Trafego ---
+        'erickdemoraes@burstmidia.com':   'gestor',
+        'gabrielanacleto@burstmidia.com': 'gestor',
+        'hellendeoliveira@burstmidia.com':'gestor',
+        'marialucia@burstmidia.com':      'gestor',
+        'ricardo@burstmidia.com':         'gestor',
+        'thuisa@burstmidia.com':          'gestor',
+
+        # --- Designer ---
+        'felipe@burstmidia.com':          'designer',
+        'laisbeisheim@burstmidia.com':    'designer',
+        'paulohenrique@burstmidia.com':   'designer',
+
+        # --- Programador ---
+        'eduardohenckemaier@burstmidia.com': 'programador',
+        'gabrielvelho@burstmidia.com':       'programador',
+    }
+
+    # ---- 1. Busca Monday /users pra validar emails + pegar nome real ----
+    print('  buscando Monday /users (validacao)...')
+    users_resp = gql('{ users(limit: 500) { id name email enabled } }', {})
     monday_users = users_resp.get('data', {}).get('users', []) or []
-    monday_users = [u for u in monday_users if u.get('enabled') and u.get('email')]
-    print(f'  {len(monday_users)} usuarios Monday ativos com email')
+    by_email = {(u.get('email') or '').lower(): u for u in monday_users if u.get('email')}
+    print(f'  {len(monday_users)} usuarios Monday')
 
-    # Mapa nome_normalizado → user
-    monday_by_name = {normalize_name(u['name']): u for u in monday_users if u.get('name')}
-
-    # ---- 2. Le Bia Soft pra saber o ROLE de cada nome ----
-    print('  buscando items Bia Soft pra detectar role por nome...')
-    col_ids = [BIA_CS_NAME_COL_ID, BIA_GESTOR_NAME_COL_ID, BIA_RESP_COL_ID]
-    items: list[dict] = []
-    first = gql(
-        '''query ($boardId: ID!, $limit: Int!, $colIds: [String!]) {
-            boards(ids: [$boardId]) {
-                items_page(limit: $limit) {
-                    cursor items {
-                        id
-                        column_values(ids: $colIds) {
-                            id text
-                            ... on MirrorValue { display_value }
-                        }
-                    }
-                }
-            }
-        }''',
-        {'boardId': BIA_SOFT_BOARD_ID, 'limit': PAGE_LIMIT, 'colIds': col_ids},
-    )
-    page = first.get('data', {}).get('boards', [{}])[0].get('items_page')
-    if page:
-        items.extend(page.get('items', []))
-        cursor = page.get('cursor')
-        while cursor:
-            nxt = gql(
-                '''query ($cursor: String!, $limit: Int!) {
-                    next_items_page(cursor: $cursor, limit: $limit) {
-                        cursor items {
-                            id
-                            column_values {
-                                id text
-                                ... on MirrorValue { display_value }
-                            }
-                        }
-                    }
-                }''',
-                {'cursor': cursor, 'limit': PAGE_LIMIT},
-            )
-            np = nxt.get('data', {}).get('next_items_page')
-            if not np: break
-            items.extend(np.get('items', []))
-            cursor = np.get('cursor')
-
-    def get_value(cv: dict) -> str | None:
-        if not cv: return None
-        txt = (cv.get('text') or '').strip()
-        if txt: return txt
-        disp = (cv.get('display_value') or '').strip()
-        return disp or None
-
-    # name_normalized → role detectado no Bia Soft
-    role_por_nome: dict[str, str] = {}
-    for it in items:
-        cv_map = {cv['id']: cv for cv in (it.get('column_values') or [])}
-        for col_id, role in [
-            (BIA_CS_NAME_COL_ID, 'cs'),
-            (BIA_GESTOR_NAME_COL_ID, 'gestor'),
-            (BIA_RESP_COL_ID, 'programador'),
-        ]:
-            nome = get_value(cv_map.get(col_id))
-            if not nome: continue
-            n = normalize_name(nome)
-            # Primeiro role detectado ganha (assume consistencia)
-            if n and n not in role_por_nome:
-                role_por_nome[n] = role
-
-    print(f'  {len(items)} items Bia Soft → {len(role_por_nome)} nomes com role')
-
-    # ---- 3. Cruza: pra cada nome do Bia Soft, pega email REAL do Monday ----
-    auth_map: dict[str, tuple[str, str]] = {}  # email → (name, role)
-    for n, role in role_por_nome.items():
-        mu = monday_by_name.get(n)
+    # ---- 2. Monta a lista final: TEAM_ROLES validado contra Monday ----
+    # Importante: role 'admin' NAO entra na monday_auth_emails — admins sao
+    # detectados via ADMIN_EMAILS hardcoded em src/lib/auth.ts (que checa
+    # primeiro no fluxo de login). A constraint da tabela tambem nao aceita
+    # 'admin' como valor de role. Os admins ficam aqui no TEAM_ROLES so pra
+    # documentacao da lista oficial do time.
+    rows: list[dict] = []
+    nao_encontrados: list[str] = []
+    desabilitados: list[str] = []
+    admins_skip: list[str] = []
+    for email, role in TEAM_ROLES.items():
+        email_lc = email.lower()
+        if role == 'admin':
+            admins_skip.append(email_lc)
+            continue
+        mu = by_email.get(email_lc)
         if not mu:
-            # Tenta match parcial (>= 2 palavras em comum)
-            tokens_alvo = set(n.split())
-            for mn, mu_cand in monday_by_name.items():
-                if len(tokens_alvo & set(mn.split())) >= 2:
-                    mu = mu_cand
-                    break
-        if mu:
-            email = mu['email'].lower()
-            if email not in auth_map:
-                auth_map[email] = (mu['name'], role)
-
-    # ---- 4. Adiciona Monday users com title de role conhecido (se ainda nao estao) ----
-    title_to_role = {
-        'cs': 'cs',
-        'customer success': 'cs',
-        'gestor': 'gestor',
-        'gestora': 'gestor',
-        'trafego': 'gestor',
-        'designer': 'designer',
-        'programador': 'programador',
-        'desenvolvedor': 'programador',
-    }
-    for u in monday_users:
-        email = (u.get('email') or '').lower()
-        if not email or email in auth_map:
+            nao_encontrados.append(email)
             continue
-        title = (u.get('title') or '').lower()
-        if not title:
+        if not mu.get('enabled'):
+            desabilitados.append(email)
             continue
-        for kw, role in title_to_role.items():
-            if kw in title:
-                auth_map[email] = (u['name'], role)
-                break
+        rows.append({
+            'email': email_lc,
+            'name': mu.get('name') or email_lc,
+            'role': role,
+        })
 
-    # ---- 4.5. Overrides hardcoded ----
-    # Pessoas que NAO estao no Bia Soft com role explicito E nao tem title no
-    # Monday — mas a gente sabe qual role elas tem. Sobrescreve / preenche.
-    #
-    # Idealmente: o admin do Monday adiciona title pra essas pessoas e elas
-    # passam a ser detectadas automaticamente. Esses overrides ficam aqui ate
-    # isso ser feito (e podem ser removidos depois).
-    ROLE_OVERRIDES = {
-        'paulohenrique@burstmidia.com': ('Paulo Henrique Pires Da Silva', 'designer'),
-        'laisbeisheim@burstmidia.com': ('Lais Beisheim', 'designer'),
-    }
-    for email, (name, role) in ROLE_OVERRIDES.items():
-        # Verifica se o email existe no Monday — se nao existir, ignora
-        existe_no_monday = any(
-            (u.get('email') or '').lower() == email.lower()
-            for u in monday_users
-        )
-        if not existe_no_monday:
-            print(f'  override IGNORADO (email nao existe no Monday): {email}')
-            continue
-        # Sempre sobrescreve (override = autoritativo)
-        auth_map[email.lower()] = (name, role)
-        print(f'  override aplicado: {email} → {role}')
+    if admins_skip:
+        print(f'  admins (pulados — usam ADMIN_EMAILS no auth.ts): {len(admins_skip)} → {admins_skip}')
 
-    # ---- 5. Apaga tudo que tava la (pra remover typos antigos) e re-insere ----
-    # IMPORTANT: usa filtro neq.__nothing__ pra deletar tudo
+    print(f'  validados:        {len(rows)}')
+    if nao_encontrados:
+        print(f'  nao encontrados:  {len(nao_encontrados)} → {nao_encontrados}')
+    if desabilitados:
+        print(f'  desabilitados:    {len(desabilitados)} → {desabilitados}')
+
+    # ---- 3. Apaga registros antigos (limpa Bia Soft typos antigos) ----
     url_del = f'{SUPABASE_URL}/rest/v1/monday_auth_emails?email=neq.__nothing__'
     try:
         r = http.delete(url_del, headers={**SUPA_HEADERS, 'Prefer': 'return=minimal'}, timeout=30)
@@ -1150,12 +1086,9 @@ def sync_auth_emails() -> dict:
     except Exception as e:
         print(f'  delete antigos falhou: {e}')
 
-    rows = [
-        {'email': email, 'name': name, 'role': role}
-        for email, (name, role) in auth_map.items()
-    ]
+    # ---- 4. Insere os novos ----
     n = supa_upsert('monday_auth_emails', rows, on_conflict='email')
-    print(f'  {n} emails inseridos (Monday /users cross Bia Soft)')
+    print(f'  {n} emails inseridos')
     supa_set_sync_meta('auth_emails', {
         'last_sync_at': dt.datetime.now(tz=dt.timezone.utc).isoformat(),
         'rows_synced': n,
