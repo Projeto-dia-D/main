@@ -1117,6 +1117,30 @@ def sync_auth_emails() -> dict:
                 auth_map[email] = (u['name'], role)
                 break
 
+    # ---- 4.5. Overrides hardcoded ----
+    # Pessoas que NAO estao no Bia Soft com role explicito E nao tem title no
+    # Monday — mas a gente sabe qual role elas tem. Sobrescreve / preenche.
+    #
+    # Idealmente: o admin do Monday adiciona title pra essas pessoas e elas
+    # passam a ser detectadas automaticamente. Esses overrides ficam aqui ate
+    # isso ser feito (e podem ser removidos depois).
+    ROLE_OVERRIDES = {
+        'paulohenrique@burstmidia.com': ('Paulo Henrique Pires Da Silva', 'designer'),
+        'laisbeisheim@burstmidia.com': ('Lais Beisheim', 'designer'),
+    }
+    for email, (name, role) in ROLE_OVERRIDES.items():
+        # Verifica se o email existe no Monday — se nao existir, ignora
+        existe_no_monday = any(
+            (u.get('email') or '').lower() == email.lower()
+            for u in monday_users
+        )
+        if not existe_no_monday:
+            print(f'  override IGNORADO (email nao existe no Monday): {email}')
+            continue
+        # Sempre sobrescreve (override = autoritativo)
+        auth_map[email.lower()] = (name, role)
+        print(f'  override aplicado: {email} → {role}')
+
     # ---- 5. Apaga tudo que tava la (pra remover typos antigos) e re-insere ----
     # IMPORTANT: usa filtro neq.__nothing__ pra deletar tudo
     url_del = f'{SUPABASE_URL}/rest/v1/monday_auth_emails?email=neq.__nothing__'
