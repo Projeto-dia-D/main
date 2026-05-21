@@ -292,30 +292,13 @@ export function GestorTrafego() {
     // Não temos como saber quais sair sem tracking; deixa pro usuário dispensar manualmente
   }, [metaErrors, reportNotification]);
 
-  // === Pendência: doutores ativos sem conta Meta vinculada ===
-  // Espelha o banner DoutoresSemVinculoMeta como notificação persistente,
-  // pra ficar visível também na aba Notificações (não só no Gestor).
-  const doutoresSemVinculoCount = useMemo(() => {
-    if (mondayAllClients.length === 0) return 0;
-    const linkedIds = new Set(links.map((l) => l.monday_client_id));
-    return mondayAllClients.filter(
-      (c) => isClientElegivelMeta(c) && !linkedIds.has(c.id)
-    ).length;
-  }, [mondayAllClients, links]);
-
+  // Garante que a notificacao antiga "gestor-doutores-sem-vinculo" seja
+  // resolvida se ainda estiver ativa de syncs passados. NAO reporta mais —
+  // a info fica disponivel apenas pelo banner inline (visivel so pra
+  // admin/super programador).
   useEffect(() => {
-    if (doutoresSemVinculoCount > 0) {
-      reportNotification({
-        id: 'gestor-doutores-sem-vinculo',
-        level: 'warning',
-        source: 'Vínculos',
-        message: `${doutoresSemVinculoCount} doutor(es) ativos sem conta Meta vinculada — o spend deles não aparece nas métricas.`,
-        detail: 'Resolva em: aba Gestor de Tráfego → "Vincular contas".',
-      });
-    } else {
-      resolveNotification('gestor-doutores-sem-vinculo');
-    }
-  }, [doutoresSemVinculoCount, reportNotification, resolveNotification]);
+    resolveNotification('gestor-doutores-sem-vinculo');
+  }, [resolveNotification]);
 
   return (
     <div className="p-6 lg:p-8 flex flex-col gap-6 max-w-[1600px] mx-auto">
@@ -412,8 +395,10 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
         </div>
       )}
 
-      {/* Banner: doutores ATIVOS (não churn/pausa/jurídico) sem vínculo Meta */}
-      {!linksMissingTable && !mondayLoading && mondayAllClients.length > 0 && (
+      {/* Banner: doutores ATIVOS (não churn/pausa/jurídico) sem vínculo Meta.
+          So aparece pra admin/super programador (info de manutencao do sistema,
+          gestor comum nao precisa ver). */}
+      {hasFullAccess(user) && !linksMissingTable && !mondayLoading && mondayAllClients.length > 0 && (
         <DoutoresSemVinculoMeta
           allClients={mondayAllClients}
           links={links}
