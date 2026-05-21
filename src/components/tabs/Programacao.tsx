@@ -16,7 +16,7 @@ import { ChatsInterrompidos } from '../programacao/ChatsInterrompidos';
 import { ChatsIncompletos } from '../programacao/ChatsIncompletos';
 import { TierImage } from '../programacao/TierImage';
 import { DoutorCard } from '../programacao/DoutorCard';
-import { DateRangeFilter } from '../programacao/DateRangeFilter';
+import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
 import { LeadsTable } from '../programacao/LeadsTable';
 import { TransferidosTable } from '../programacao/TransferidosTable';
 import { DoutoresTable } from '../programacao/DoutoresTable';
@@ -41,7 +41,10 @@ export function Programacao() {
   const { allClients: mondayClients, responsavelByName: responsavelByClient, responsaveis } =
     useMondayClients();
 
-  const [range, setRange] = useState<DateRange>({ start: null, end: null });
+  // Default: range "Dia D" (dia 12 do mes atual ate hoje) — igual ao das
+  // outras abas (Apresentacao, Gestor, CS) pra os numeros baterem ao abrir.
+  // User pode trocar pra "Tudo" ou outro range no DateRangeFilter.
+  const [range, setRange] = useState<DateRange>(() => diaDRange());
   const [openModal, setOpenModal] = useState<ModalKind>(null);
   const [subAba, setSubAba] = useState<SubAba>('metricas');
   // null = mostra todos; senão filtra leads por responsável (Gabriel/Eduardo)
