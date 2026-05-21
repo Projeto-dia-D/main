@@ -12,11 +12,14 @@ import { PainelMiniDesigner } from '../design/PainelMiniDesigner';
 import { RankingDesigners } from '../design/RankingDesigners';
 import { EventosTable } from '../design/EventosTable';
 import { EventosSemDesignerEditor } from '../design/EventosSemDesignerEditor';
+import { useUser, hasFullAccess } from '../../lib/userContext';
+import { nameMatchesScope } from '../../lib/monday';
 
 type ModalKind = 'feitos' | 'manutencoes' | 'designers' | 'sem-designer' | null;
 type DrillKind = { designer: string; type: 'feitas' | 'manutencoes' } | null;
 
 export function Design() {
+  const user = useUser();
   const [range, setRange] = useState<DateRange>(() => esteMesRange());
   const [openModal, setOpenModal] = useState<ModalKind>(null);
   const [drill, setDrill] = useState<DrillKind>(null);
@@ -25,10 +28,40 @@ export function Design() {
   const { dateSet: holidaySet } = useHolidays();
   const { atestados } = useAtestados();
 
+  // === SCOPE FILTER ===
+  // Designer não-admin: ve so seus proprios eventos.
+  // Admin/super: ve todos.
+  const eventosVisiveis = useMemo(() => {
+    if (hasFullAccess(user)) return eventos;
+    if (user.role === 'designer' && user.scope) {
+      return eventos.filter((e) => nameMatchesScope(user.scope!, e.designer_responsavel ?? ''));
+    }
+    return eventos;
+  }, [eventos, user]);
+
   const summary = useMemo(
-    () => computeDesignMetrics(eventos, range, holidaySet, atestados),
-    [eventos, range, holidaySet, atestados]
+    () => computeDesignMetrics(eventosVisiveis, range, holidaySet, atestados),
+    [eventosVisiveis, range, holidaySet, atestados]
   );
+
+  // === GUARD ===
+  // Acesso permitido apenas para:
+  //  - hasFullAccess (admin Renan/Vanessa, super programador Gabriel/Eduardo)
+  //  - role = 'designer' (e ele só ve os proprios dados via scope filter acima)
+  // IMPORTANTE: guard fica DEPOIS dos hooks (Rules of Hooks — hooks sempre na mesma ordem).
+  if (!hasFullAccess(user) && user.role !== 'designer') {
+    return (
+      <div className="p-8">
+        <div className="rounded-2xl border border-burst-orange/40 bg-burst-card p-8 max-w-2xl">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="text-burst-orange-bright" />
+            <h2 className="font-display text-2xl text-white tracking-wider">Acesso restrito</h2>
+          </div>
+          <p className="text-sm text-burst-muted">Esta aba é exclusiva para Designers e administradores.</p>
+        </div>
+      </div>
+    );
+  }
 
   const feitosFiltered = useMemo(
     () => summary.eventosFiltrados.filter((e) => e.tipo_evento === 'feito'),

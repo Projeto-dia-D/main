@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Search, HeartPulse, ArrowLeft, AlertCircle } from 'lucide-react';
+import { Search, HeartPulse, ArrowLeft, AlertCircle, AlertTriangle } from 'lucide-react';
+import { useUser, hasFullAccess } from '../../lib/userContext';
 import { useLeads } from '../../hooks/useLeads';
 import { useMondayClients } from '../../hooks/useMondayClients';
 import { useDesignEventos } from '../../hooks/useDesignEventos';
@@ -22,6 +23,7 @@ import { TimelineCliente } from '../saude/TimelineCliente';
 import { Avatar } from '../Avatar';
 
 export function SaudeCliente() {
+  const user = useUser();
   const { leads, loading: leadsLoading } = useLeads();
   const {
     clientsAll: allClients,            // ← agora usa a lista COMPLETA (com churnados)
@@ -190,6 +192,26 @@ export function SaudeCliente() {
   }, [todos]);
 
   const loading = leadsLoading || mondayLoading || designLoading;
+
+  // === GUARD ===
+  // Saude do Cliente expoe dados sensiveis (scoring, historico, atrasos)
+  // de TODOS os clientes. So admin (Renan/Vanessa) e super programador
+  // (Gabriel/Eduardo) podem acessar.
+  if (!hasFullAccess(user)) {
+    return (
+      <div className="p-8">
+        <div className="rounded-2xl border border-burst-orange/40 bg-burst-card p-8 max-w-2xl">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="text-burst-orange-bright" />
+            <h2 className="font-display text-2xl text-white tracking-wider">Acesso restrito</h2>
+          </div>
+          <p className="text-sm text-burst-muted">
+            Esta aba mostra dados consolidados de todos os clientes — disponivel apenas para administradores.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // === Vista de perfil ===
   if (selecionado) {
