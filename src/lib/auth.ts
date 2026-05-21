@@ -200,10 +200,14 @@ export function validatePassword(plain: string): string | null {
   return null;
 }
 
-/** Emails ADMIN — veem tudo + ROLE label "Admin". */
+/** Emails ADMIN — veem tudo + ROLE label "Admin".
+ *  Confirmado no Monday em 21/05/2026:
+ *    - Renan Rafaeli (ID 29142665, Gestor de Projetos) → renan@burstmidia.com
+ *    - Vanessa Rocha (ID 43372550) → vanessarocha@burstmidia.com
+ */
 export const ADMIN_EMAILS = new Set<string>(
   [
-    'renanrafaeli@burstmidia.com',
+    'renan@burstmidia.com',
     'vanessarocha@burstmidia.com',
   ].map((e) => e.toLowerCase())
 );
