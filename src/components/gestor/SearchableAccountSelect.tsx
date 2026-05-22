@@ -82,15 +82,26 @@ export function SearchableAccountSelect({
     }
   }, [open]);
 
+  // Normaliza pra busca acent-insensitive ("guimaraes" acha "Guimarães",
+  // "joao" acha "João", etc.). Tambem ignora maiusculas/minusculas.
+  function norm(s: string): string {
+    return s
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .trim();
+  }
+
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    const q = norm(query);
     if (!q) return options;
-    return options.filter(
-      (o) =>
-        o.name.toLowerCase().includes(q) ||
-        o.gestor.toLowerCase().includes(q) ||
-        o.account_id.toLowerCase().includes(q)
-    );
+    // Suporta multiplos termos separados por espaco — TODOS precisam bater
+    // (em qualquer campo). Ex: "barbara guimaraes" acha "CA - 01 - Dra. Barbara Guimarães"
+    const terms = q.split(/\s+/).filter(Boolean);
+    return options.filter((o) => {
+      const haystack = norm(`${o.name} ${o.gestor} ${o.account_id}`);
+      return terms.every((t) => haystack.includes(t));
+    });
   }, [options, query]);
 
   const grouped = useMemo(() => {
