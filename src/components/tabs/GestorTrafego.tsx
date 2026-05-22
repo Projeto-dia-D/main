@@ -336,13 +336,17 @@ export function GestorTrafego() {
           {metaLoading && <span className="ml-2 text-burst-orange-bright">atualizando Meta...</span>}
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setOpenModal('vinculos')}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-burst-orange/15 border border-burst-orange/40 hover:border-burst-orange hover:bg-burst-orange/25 transition-colors text-sm text-burst-orange-bright font-semibold"
-          >
-            <Link2 size={15} />
-            Vincular contas
-          </button>
+          {/* "Vincular contas" e operacao de manutencao do sistema (so admin
+              precisa). Gestor comum nao deve mexer em vinculos de outros. */}
+          {hasFullAccess(user) && (
+            <button
+              onClick={() => setOpenModal('vinculos')}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-burst-orange/15 border border-burst-orange/40 hover:border-burst-orange hover:bg-burst-orange/25 transition-colors text-sm text-burst-orange-bright font-semibold"
+            >
+              <Link2 size={15} />
+              Vincular contas
+            </button>
+          )}
           <DateRangeFilter range={range} onChange={setRange} />
         </div>
       </div>
