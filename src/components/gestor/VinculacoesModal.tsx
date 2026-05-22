@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Link2, X, AlertTriangle, Check, Download, Loader2, RefreshCw } from 'lucide-react';
 import type { MondayClient } from '../../lib/monday';
 import type { AdAccountInfo, GestorName } from '../../lib/meta';
@@ -31,6 +31,22 @@ export function VinculacoesModal({
 }: Props) {
   const [query, setQuery] = useState('');
   const [onlyUnlinked, setOnlyUnlinked] = useState(false);
+
+  // Auto-carrega os token-owners no momento que o modal abre.
+  // Anacleto/Erick/Hellen/etc nao tem token proprio — suas contas estao
+  // nos Business Managers do Renan/Weslei/Andre. Pra evitar UX confusa
+  // ("carregue um gestor" quando o admin nao sabe qual gestor token),
+  // disparamos um load de todos os tokens disponiveis no mount.
+  const autoLoadedRef = useRef(false);
+  useEffect(() => {
+    if (autoLoadedRef.current) return;
+    autoLoadedRef.current = true;
+    for (const acc of config.META_ACCOUNTS) {
+      if (acc.token && !loadedGestores.includes(acc.gestor)) {
+        onLoadGestor(acc.gestor).catch(() => { /* erro ja exibido no painel */ });
+      }
+    }
+  }, [loadedGestores, onLoadGestor]);
 
   const linksByClient = useMemo(() => {
     const m = new Map<string, ClientMetaLink>();
@@ -66,11 +82,14 @@ export function VinculacoesModal({
         <div className="flex items-center gap-2 mb-2">
           <Download size={14} className="text-burst-orange-bright" />
           <div className="text-[11px] uppercase tracking-widest text-burst-muted">
-            Carregar contas do Meta
+            Contas Meta carregadas (por dono do token)
           </div>
           <span className="text-xs text-burst-muted ml-auto">
-            {loadedAccounts.length} conta(s) na lista
+            {loadedAccounts.length} conta(s) disponiveis
           </span>
+        </div>
+        <div className="text-[10px] text-burst-muted/70 mb-2 italic">
+          Carregam automaticamente. Clique no botao verde pra recarregar (caso novas contas foram criadas no Business Manager).
         </div>
         <div className="flex flex-wrap gap-2">
           {config.META_ACCOUNTS.map((acc) => {
@@ -341,7 +360,7 @@ function Row({
           onChange={handleSelect}
           onClear={handleClear}
           disabled={saving || options.length === 0}
-          placeholder={options.length === 0 ? 'carregue um gestor' : 'selecionar...'}
+          placeholder={options.length === 0 ? 'carregando contas...' : 'buscar / selecionar conta...'}
         />
       </td>
       <td className="px-3 py-2 text-right align-top">
