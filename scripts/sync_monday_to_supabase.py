@@ -1012,6 +1012,7 @@ def sync_auth_emails() -> dict:
         # --- CS ---
         'annecamargo@burstmidia.com':     'cs',
         'julia@burstmidia.com':           'cs',
+        'lauracordova@burstmidia.com':    'cs',
         'lilian@burstmidia.com':          'cs',
         'paulasouza@burstmidia.com':      'cs',
         'yasminxavier@burstmidia.com':    'cs',
@@ -1028,6 +1029,7 @@ def sync_auth_emails() -> dict:
         'felipe@burstmidia.com':          'designer',
         'laisbeisheim@burstmidia.com':    'designer',
         'paulohenrique@burstmidia.com':   'designer',
+        'camiledeoliveira@burstmidia.com':'designer',
 
         # --- Programador ---
         'eduardohenckemaier@burstmidia.com': 'programador',

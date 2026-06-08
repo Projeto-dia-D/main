@@ -260,8 +260,48 @@ def fetch_messages(chat_jid: str, max_msgs: int, since_iso: str | None = None) -
 
 
 # ------------------------------------------------------------
-# Identificação de papel (cruza com monday_auth_emails)
+# Identificação de papel (PRIMEIRO por telefone, fallback por nome)
 # ------------------------------------------------------------
+#
+# Phone book hardcoded da equipe Burst — mantido em sincronia com
+# src/lib/teamPhones.ts. Chave = ULTIMOS 8 DIGITOS do telefone
+# (cobre numeros com ou sem o 9-prefix obrigatorio desde 2014).
+#
+# Por que existe: name-matching (display_name do WhatsApp vs nome no
+# Monday) errava muito ("Paulo Burst", "Paulo Lentes", emojis, etc).
+# Telefone é estavel.
+TEAM_PHONES = {
+    # Designers
+    '91287493': ('Paulo', 'designer'),
+    '98325611': ('Lais', 'designer'),
+    '99868274': ('Felipe', 'designer'),
+    # Gestores
+    '92027739': ('Gabriel Anacleto', 'gestor'),
+    '99562859': ('Ricardo', 'gestor'),
+    '99164139': ('Erick', 'gestor'),
+    # CS
+    '98144940': ('Hellen', 'cs'),
+    '99948791': ('Maria', 'cs'),
+    '91178059': ('Thuisa', 'cs'),
+    '91739073': ('Yasmin', 'cs'),
+    '99079063': ('Laura', 'cs'),
+    '99671923': ('Anne', 'cs'),
+    '99386746': ('Julia', 'cs'),
+    '98112865': ('Lilian', 'cs'),
+    '99672621': ('Paula', 'cs'),
+}
+
+
+def identify_team_member(phone: str | None) -> tuple[str, str] | None:
+    """Retorna (name, role) se telefone bate com a equipe, senao None."""
+    if not phone:
+        return None
+    digits = re.sub(r'\D', '', phone)
+    if len(digits) < 8:
+        return None
+    return TEAM_PHONES.get(digits[-8:])
+
+
 def load_auth_emails_map() -> dict[str, tuple[str, str]]:
     """Retorna {nome_normalizado: (display_name, role)} de monday_auth_emails."""
     rows = supa_get('monday_auth_emails', 'select=email,name,role')
@@ -279,12 +319,22 @@ def load_auth_emails_map() -> dict[str, tuple[str, str]]:
 
 
 def infer_role(display_name: str | None, sender_name: str | None,
-               auth_map: dict[str, tuple[str, str]]) -> tuple[str, str, str | None]:
+               auth_map: dict[str, tuple[str, str]],
+               phone: str | None = None) -> tuple[str, str, str | None]:
     """Retorna (role, inferred_name, monday_email_se_souber).
 
-    Tenta cruzar nome do WhatsApp com nome do Monday. Retorna 'cliente' como
-    default (se não bate com nenhum membro da equipe).
+    Ordem de match:
+      1. TELEFONE (TEAM_PHONES) — fonte mais confiavel, ignora display_name
+      2. Nome exato em auth_map
+      3. Nome por substring em auth_map (com garantia de palavra em comum)
+      4. Default: 'cliente'
     """
+    # 1. Phone-first: se telefone bate com a equipe, usa direto
+    team = identify_team_member(phone)
+    if team:
+        return team[1], team[0], None
+
+    # 2/3. Fallback por nome (caso o phone book ainda nao tenha esse numero)
     candidates = [display_name, sender_name]
     for cand in candidates:
         if not cand:
@@ -633,7 +683,7 @@ def sync_groups_and_members() -> tuple[int, int]:
             if not phone:
                 continue
             display = p.get('DisplayName') or ''
-            role, inferred_name, monday_email = infer_role(display, None, auth_map)
+            role, inferred_name, monday_email = infer_role(display, None, auth_map, phone=phone)
             rows_members.append({
                 'chat_jid': chat_jid,
                 'phone': phone,
@@ -712,13 +762,20 @@ def sync_messages(mode: str) -> int:
             text = m.get('text') or (m.get('content', {}) or {}).get('text') if isinstance(m.get('content'), dict) else None
             msg_type = m.get('messageType') or 'unknown'
 
-            # Inferir role: 1) membros do grupo, 2) cruzar nome
+            # Inferir role:
+            #   1) phone book hardcoded (TEAM_PHONES) — fonte de verdade
+            #   2) membros do grupo (whatsapp_group_members cacheado)
+            #   3) cruzar nome com monday_auth_emails
             role = 'unknown'
-            if sender_phone and sender_phone in chat_members:
+            team = identify_team_member(sender_phone)
+            if team:
+                role = team[1]
+            elif sender_phone and sender_phone in chat_members:
                 role = chat_members[sender_phone]
             else:
-                # Tenta inferir pelo nome
-                inf_role, _, _ = infer_role(sender_name, sender_name, auth_map)
+                # Tenta inferir pelo nome (passa o phone tambem caso o sender
+                # nao esteja na tabela members mas esteja no TEAM_PHONES)
+                inf_role, _, _ = infer_role(sender_name, sender_name, auth_map, phone=sender_phone)
                 role = inf_role
             is_from_burst = role in ('cs', 'gestor', 'designer', 'programador', 'admin')
 

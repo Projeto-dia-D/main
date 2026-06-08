@@ -29,6 +29,7 @@ compute_response_times = wa['compute_response_times']
 compute_score = wa['compute_score']
 load_auth_emails_map = wa['load_auth_emails_map']
 infer_role = wa['infer_role']
+identify_team_member = wa['identify_team_member']
 ts_to_iso = wa['ts_to_iso']
 clean_phone = wa['clean_phone']
 supa_upsert = wa['supa_upsert']
@@ -97,7 +98,7 @@ for p in participants:
     if not phone:
         continue
     display = p.get('DisplayName') or ''
-    role, inferred_name, monday_email = infer_role(display, None, auth_map)
+    role, inferred_name, monday_email = infer_role(display, None, auth_map, phone=phone)
     roles_seen[role] = roles_seen.get(role, 0) + 1
     rows_members.append({
         'chat_jid': chat_jid,
@@ -145,11 +146,15 @@ for m in msgs:
         text = m.get('text')
     msg_type = m.get('messageType') or 'unknown'
 
+    # Phone book primeiro (mais confiavel), depois cache de membros, depois nome
     role = 'unknown'
-    if sender_phone and sender_phone in members_by_phone:
+    team = identify_team_member(sender_phone)
+    if team:
+        role = team[1]
+    elif sender_phone and sender_phone in members_by_phone:
         role = members_by_phone[sender_phone]
     else:
-        inf, _, _ = infer_role(sender_name, sender_name, auth_map)
+        inf, _, _ = infer_role(sender_name, sender_name, auth_map, phone=sender_phone)
         role = inf
     is_from_burst = role in ('cs', 'gestor', 'designer', 'programador', 'admin')
 
