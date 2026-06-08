@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Link2, X, AlertTriangle, Check, Download, Loader2, RefreshCw } from 'lucide-react';
 import type { MondayClient } from '../../lib/monday';
+import { isClientElegivelMeta } from '../../lib/monday';
 import type { AdAccountInfo, GestorName } from '../../lib/meta';
 import type { ClientMetaLink } from '../../lib/linkStorage';
 import { SearchableAccountSelect } from './SearchableAccountSelect';
@@ -16,6 +17,18 @@ interface Props {
   links: ClientMetaLink[];
   onLink: (link: Omit<ClientMetaLink, 'updated_at'>) => Promise<void>;
   onUnlink: (mondayClientId: string) => Promise<void>;
+  /** Quando abre via banner "X doutores sem vínculo", restringe a tabela
+   *  APENAS aos clientes nessa lista. Se omitido (abertura normal pelo
+   *  botão "Vinculações"), mostra todos. */
+  restrictToClientIds?: Set<string>;
+  /** Inicializa o toggle "Só não vinculados" ligado. Útil quando abre via
+   *  banner — usuário já quer ver só os pendentes. */
+  initialOnlyUnlinked?: boolean;
+  /** Set de monday_client_ids que estão no board Bia Soft (qualquer fase).
+   *  Quando informado, o modal esconde clientes sem Bia Soft, não churn,
+   *  não jurídico — A MENOS QUE já tenham vínculo (esses permanecem pra
+   *  poder limpar). Se omitido, mostra todos (compat). */
+  biaAllIds?: Set<string>;
 }
 
 export function VinculacoesModal({
@@ -28,9 +41,12 @@ export function VinculacoesModal({
   links,
   onLink,
   onUnlink,
+  restrictToClientIds,
+  initialOnlyUnlinked = false,
+  biaAllIds,
 }: Props) {
   const [query, setQuery] = useState('');
-  const [onlyUnlinked, setOnlyUnlinked] = useState(false);
+  const [onlyUnlinked, setOnlyUnlinked] = useState(initialOnlyUnlinked);
 
   // Auto-carrega os token-owners no momento que o modal abre.
   // Anacleto/Erick/Hellen/etc nao tem token proprio — suas contas estao
@@ -62,6 +78,23 @@ export function VinculacoesModal({
 
   const filteredClients = useMemo(() => {
     let list = [...clients].sort((a, b) => a.name.localeCompare(b.name));
+    // Restrição vinda do banner — aplica ANTES dos outros filtros pra que o
+    // toggle "só não vinculados" e a busca operem dentro do escopo restrito.
+    // Quando há restrição explícita, NÃO aplica o filtro de elegibilidade
+    // automática (o caller já filtrou).
+    if (restrictToClientIds && restrictToClientIds.size > 0) {
+      list = list.filter((c) => restrictToClientIds.has(c.id));
+    } else if (biaAllIds) {
+      // Sem restrição explícita: aplica filtro automático de elegibilidade.
+      // Mostra cliente SE:
+      //   - já tem vínculo (mantém visível pra poder limpar/atualizar), OU
+      //   - está no board Bia Soft (biaAllIds) E é elegível Meta
+      //     (não churn, não pausado, não jurídico).
+      list = list.filter((c) => {
+        if (linksByClient.has(c.id)) return true;
+        return biaAllIds.has(c.id) && isClientElegivelMeta(c);
+      });
+    }
     if (onlyUnlinked) list = list.filter((c) => !linksByClient.has(c.id));
     if (query.trim()) {
       const q = query.toLowerCase();
@@ -73,7 +106,7 @@ export function VinculacoesModal({
       );
     }
     return list;
-  }, [clients, query, onlyUnlinked, linksByClient]);
+  }, [clients, query, onlyUnlinked, linksByClient, restrictToClientIds, biaAllIds]);
 
   return (
     <div className="flex flex-col gap-4">

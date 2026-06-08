@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   fetchMondayClients,
   fetchBiaSoftData,
@@ -131,6 +131,15 @@ export function useMondayClients(): UseMondayClientsResult {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(initialUpdate);
 
+  // Refs com o último tamanho aceito por bloco — usado pelo guard de
+  // regressão (anti-oscilação). Refs em vez de state porque o useEffect tem
+  // `[]` e capturaria valores stale dos state values dentro do `load()`.
+  const lastSizesRef = useRef({
+    clients: initialFiltered.length,
+    clientsAll: initialClientsAll.length,
+    biaAllIds: initialAllIds.size,
+  });
+
   useEffect(() => {
     let active = true;
 
@@ -140,18 +149,23 @@ export function useMondayClients(): UseMondayClientsResult {
         // sync de 15 em 15 min). Cai pra ~1 query rapida em vez de ate 50
         // paginas de activity_logs do Monday. Se vier vazio (tabela nao
         // populada ainda), faz fallback pro GraphQL.
+        // RESILIENTE: cada fonte com seu próprio catch — uma falha (Supabase
+        // fora, rate limit do Monday) NÃO zera as outras. Antes era Promise.all
+        // tudo-ou-nada: qualquer falha derrubava TODOS os clientes (foi o que
+        // aconteceu na queda do Supabase — a timeline falhou e sumiu tudo).
         const [mainResult, biaData, biaTimelineSupa] = await Promise.all([
-          fetchMondayClients(),
-          fetchBiaSoftData(),
-          fetchBiaFaseTimelineFromSupabase(90),
+          fetchMondayClients().catch((e) => { console.warn('[useMondayClients] fetchMondayClients falhou:', e); return null; }),
+          fetchBiaSoftData().catch((e) => { console.warn('[useMondayClients] fetchBiaSoftData falhou:', e); return null; }),
+          fetchBiaFaseTimelineFromSupabase(90).catch(() => new Map<string, FaseTransition[]>()),
         ]);
         const biaTimelineRaw = biaTimelineSupa.size > 0
           ? biaTimelineSupa
-          : await fetchBiaFaseTimeline(90);
+          : await fetchBiaFaseTimeline(90).catch(() => new Map<string, FaseTransition[]>());
         if (!active) return;
-        const filtered = mainResult.clients.filter((c) =>
-          isClientNoBiaSoftById(c, biaData.allIds)
-        );
+        const biaAllIdsSafe = biaData ? biaData.allIds : new Set<string>();
+        const filtered = mainResult
+          ? mainResult.clients.filter((c) => isClientNoBiaSoftById(c, biaAllIdsSafe))
+          : [];
 
         // === ANTI-OSCILACAO ===
         // Se a chamada do Monday retornou success mas com payload vazio
@@ -160,27 +174,63 @@ export function useMondayClients(): UseMondayClientsResult {
         // problematico fazia os cards "sumirem" temporariamente ate a
         // proxima rodada bem sucedida.
         //
+        // ADICIONALMENTE: protege contra REGRESSÃO PARCIAL — se o fetch
+        // novo trouxe < 80% do tamanho anterior (provavelmente truncou por
+        // timeout / rate limit silencioso), descarta o resultado e mantém
+        // o snapshot anterior. Sem esse guard, clientes (ex: Amanda Bragança)
+        // "saíam e voltavam" do modal de vínculos a cada ciclo de 10min.
+        //
         // Guard por bloco (main vs bia) pra permitir update parcial:
         //   - se Monday voltou OK mas Bia falhou: atualiza clients, mantem Bia
         //   - vice-versa
         //   - se ambos voltaram vazios E ja tinhamos dados: nao mexe em nada
-        const mainHasData = mainResult.clients.length > 0 || mainResult.clientsAll.length > 0;
-        const biaHasData = biaData.allIds.size > 0;
+        const SHRINK_THRESHOLD = 0.8;
+        const previousClientsAllSize = lastSizesRef.current.clientsAll;
+        const previousBiaAllSize = lastSizesRef.current.biaAllIds;
 
-        if (mainHasData) {
+        const newClientsSize = mainResult ? mainResult.clients.length : 0;
+        const newClientsAllSize = mainResult ? mainResult.clientsAll.length : 0;
+        const newBiaAllSize = biaData ? biaData.allIds.size : 0;
+
+        // Regressão parcial = veio com dados, mas significativamente menor que
+        // o anterior. Considera só se tinha snapshot anterior (previousSize > 0).
+        const mainRegressao =
+          previousClientsAllSize > 0 &&
+          newClientsAllSize > 0 &&
+          newClientsAllSize < previousClientsAllSize * SHRINK_THRESHOLD;
+        const biaRegressao =
+          previousBiaAllSize > 0 &&
+          newBiaAllSize > 0 &&
+          newBiaAllSize < previousBiaAllSize * SHRINK_THRESHOLD;
+
+        const mainHasData = (newClientsSize > 0 || newClientsAllSize > 0) && !mainRegressao;
+        const biaHasData = newBiaAllSize > 0 && !biaRegressao;
+
+        if (mainHasData && mainResult) {
           setAllClients(mainResult.clients);
           setClientsAll(mainResult.clientsAll);
           setClients(filtered);
+          lastSizesRef.current.clients = filtered.length;
+          lastSizesRef.current.clientsAll = newClientsAllSize;
+        } else if (mainRegressao) {
+          console.warn(
+            `[useMondayClients] fetchMondayClients regrediu (${newClientsAllSize} < ${previousClientsAllSize} * ${SHRINK_THRESHOLD}) — preservando snapshot anterior`,
+          );
         } else {
           console.warn('[useMondayClients] fetchMondayClients voltou vazio — preservando estado anterior');
         }
 
-        if (biaHasData) {
+        if (biaHasData && biaData) {
           setBiaActiveIds(biaData.activeIds);
           setBiaAllIds(biaData.allIds);
           setResponsavelByClientId(biaData.responsavelByClientId);
           setResponsavelByName(biaData.responsavelByName);
           setResponsaveis(biaData.responsaveis);
+          lastSizesRef.current.biaAllIds = newBiaAllSize;
+        } else if (biaRegressao) {
+          console.warn(
+            `[useMondayClients] fetchBiaSoftData regrediu (${newBiaAllSize} < ${previousBiaAllSize} * ${SHRINK_THRESHOLD}) — preservando snapshot anterior`,
+          );
         } else {
           console.warn('[useMondayClients] fetchBiaSoftData voltou vazio — preservando estado anterior');
         }
@@ -189,7 +239,7 @@ export function useMondayClients(): UseMondayClientsResult {
         // Reindexa por monday_principal_client_id usando o bridge clientIdsByBiaItemId.
         const timelineByClient = new Map<string, FaseTransition[]>();
         for (const [biaItemId, transitions] of biaTimelineRaw) {
-          const linkedIds = biaData.clientIdsByBiaItemId.get(biaItemId) ?? [];
+          const linkedIds = biaData?.clientIdsByBiaItemId.get(biaItemId) ?? [];
           for (const cid of linkedIds) {
             // Se um mesmo monday_client_id aparece em multiplos bia_items,
             // concatenamos as transicoes (caso raro, mas seguro).
@@ -205,7 +255,7 @@ export function useMondayClients(): UseMondayClientsResult {
         }
         // Timeline e itens derivados do Bia — so atualiza se biaHasData
         // (senao a derivacao via clientIdsByBiaItemId fica errada).
-        if (biaHasData) {
+        if (biaHasData && biaData) {
           setBiaTimelineByClientId(timelineByClient);
           setBiaFaseByClientId(biaData.faseByClientId);
           // Inverte clientIdsByBiaItemId → biaItemIdByClientId (1 client pode
@@ -226,13 +276,13 @@ export function useMondayClients(): UseMondayClientsResult {
         setLastUpdate(new Date());
 
         // Cache so persiste dados validos — se voltou vazio, mantem cache antigo
-        if (mainHasData) {
+        if (mainHasData && mainResult) {
           writeCache<CachedClients>(CACHE_KEY_CLIENTS, {
             clients: mainResult.clients,
             clientsAll: mainResult.clientsAll,
           });
         }
-        if (biaHasData) {
+        if (biaHasData && biaData) {
           writeCache<CachedBia>(CACHE_KEY_BIA, {
             allIds: Array.from(biaData.allIds),
             activeIds: Array.from(biaData.activeIds),

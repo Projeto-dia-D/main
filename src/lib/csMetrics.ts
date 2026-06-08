@@ -3,6 +3,7 @@ import type { MondayClient } from './monday';
 import type { CampaignInsight } from './meta';
 import type { ClientMetaLink, DoutorClientLink } from './linkStorage';
 import { computeGestorMetrics, type ClientMetrics, tierForCpt } from './gestorMetrics';
+import { getCsReassignFloor, isCsOculto } from '../config';
 
 export interface CsMetrics {
   cs: string;
@@ -67,6 +68,11 @@ export function computeCsMetrics(opts: {
     biaTimelineByClientId,
     biaFaseByClientId,
     dateRange,
+    // Reatribuição de CS (Yasmin saiu): pros clientes reatribuídos, só conta
+    // a partir do corte — histórico não é jogado no novo CS. Só aqui (visão de
+    // CS); o gestor mantém o histórico (computeGestorMetrics do GestorTrafego
+    // não passa este param).
+    csReassignFloor: getCsReassignFloor,
   });
 
   // Achata os ClientMetrics em uma só lista (de todos gestores + clientsFora)
@@ -91,6 +97,7 @@ export function computeCsMetrics(opts: {
       inactive: false,
       spendBruto: 0,
       spendExcluido: 0,
+      spendExcluidoCrc: 0,
       periodosManutencao: [],
     })),
   ];
@@ -104,9 +111,15 @@ export function computeCsMetrics(opts: {
   for (const cm of linkedClientMetrics) {
     const cs = cm.client.cs?.trim();
     if (!cs) {
-      clientesSemCs.push(cm);
+      // Linkado sem CS (ex: CS saiu e não houve reatribuição). Só lista como
+      // "sem CS" se teve atividade no período — cliente morto (0 leads/spend)
+      // não polui a visão.
+      if (cm.mensagensIniciadas > 0 || cm.spend > 0) clientesSemCs.push(cm);
       continue;
     }
+    // Rede de proteção: CS que saiu (Yasmin) nunca vira card — já resolvido na
+    // fonte (monday.ts lê a coluna "CS" people). Aqui é só garantia.
+    if (isCsOculto(cs)) continue;
     const arr = byCs.get(cs) ?? [];
     arr.push(cm);
     byCs.set(cs, arr);

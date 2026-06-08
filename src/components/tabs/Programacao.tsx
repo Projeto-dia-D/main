@@ -23,7 +23,7 @@ import { DoutoresTable } from '../programacao/DoutoresTable';
 import { PerfilPessoalProgramador } from '../programacao/PerfilPessoalProgramador';
 import { RevisaoMotivos } from '../programacao/RevisaoMotivos';
 import { Modal } from '../Modal';
-import { Users, AlertTriangle, PhoneOff, FileWarning, ListChecks, HelpCircle, BarChart3 } from 'lucide-react';
+import { Users, AlertTriangle, PhoneOff, FileWarning, ListChecks, HelpCircle, BarChart3, Search, X } from 'lucide-react';
 import { useUser, hasFullAccess } from '../../lib/userContext';
 import { ViewAsTab } from '../ViewAsTab';
 import { useUserPhotos } from '../../hooks/useUserPhotos';
@@ -38,8 +38,13 @@ export function Programacao() {
   // Clients são carregados pra aplicar o corte de churn por cliente.
   // Programação usa TODOS os clientes (não apenas com Bia) pra que o churn
   // cutoff funcione independente do filtro de Bia Soft.
-  const { allClients: mondayClients, responsavelByName: responsavelByClient, responsaveis } =
-    useMondayClients();
+  const {
+    allClients: mondayClients,
+    responsavelByName: responsavelByClient,
+    responsaveis,
+    biaTimelineByClientId,
+    biaFaseByClientId,
+  } = useMondayClients();
 
   // Default: range "Dia D" (dia 12 do mes atual ate hoje) — igual ao das
   // outras abas (Apresentacao, Gestor, CS) pra os numeros baterem ao abrir.
@@ -51,6 +56,8 @@ export function Programacao() {
   const [responsavelFiltro, setResponsavelFiltro] = useState<string | null>(null);
   // Drill-down em UM doutor a partir do PerfilPessoalProgramador
   const [drillDoutor, setDrillDoutor] = useState<string | null>(null);
+  // Busca textual na seção "Análise por Doutor" — acent-insensitive
+  const [buscaDoutor, setBuscaDoutor] = useState('');
   const { lookup: lookupPhoto } = useUserPhotos();
 
   // === FILTRO POR ROLE ===
@@ -82,16 +89,16 @@ export function Programacao() {
   }, [leads, range, effectiveResponsavel, responsavelByClient]);
 
   const summary = useMemo(
-    () => computeMetrics(filteredLeads, range, instanceMap, mondayClients),
-    [filteredLeads, range, instanceMap, mondayClients]
+    () => computeMetrics(filteredLeads, range, instanceMap, mondayClients, biaTimelineByClientId, biaFaseByClientId),
+    [filteredLeads, range, instanceMap, mondayClients, biaTimelineByClientId, biaFaseByClientId]
   );
 
   // Summary com TODOS os leads (sem filtro por responsável) — usado pela
   // visão pessoal pra calcular comparação vs média geral da agência.
   const fullSummary = useMemo(() => {
     const all = filterByDateRange(leads, range);
-    return computeMetrics(all, range, instanceMap, mondayClients);
-  }, [leads, range, instanceMap, mondayClients]);
+    return computeMetrics(all, range, instanceMap, mondayClients, biaTimelineByClientId, biaFaseByClientId);
+  }, [leads, range, instanceMap, mondayClients, biaTimelineByClientId, biaFaseByClientId]);
   // ATENÇÃO: os modais e listas devem usar `summary.activeLeads`, nunca
   // `filteredLeads`. activeLeads já tirou chats interrompidos e incompletos.
   const transferidos = useMemo(
@@ -290,28 +297,68 @@ export function Programacao() {
           />
           {summary.totalTransferidos > 0 && <TierImage tier={summary.tier} />}
           <RankingDoutores doutores={summary.doutores} />
-          <Alertas summary={summary} />
+          <Alertas summary={summary} range={range} />
           <ChatsInterrompidos leads={summary.chatsInterrompidos} />
           <ChatsIncompletos leads={summary.chatsIncompletos} />
 
-          {summary.doutores.length > 0 && (
-            <section>
-              <div className="flex items-center gap-2 mb-4">
-                <Users className="text-burst-orange-bright" size={20} />
-                <h3 className="font-display text-xl tracking-wider text-white">
-                  Análise por Doutor
-                </h3>
-                <span className="text-xs text-burst-muted">
-                  {summary.doutores.length} doutor(es)
-                </span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                {summary.doutores.map((d) => (
-                  <DoutorCard key={d.nome} doutor={d} />
-                ))}
-              </div>
-            </section>
-          )}
+          {summary.doutores.length > 0 && (() => {
+            // Normaliza pra busca acent-insensitive ("barbara" acha "Bárbara")
+            const norm = (s: string) =>
+              s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+            const termos = norm(buscaDoutor).split(/\s+/).filter(Boolean);
+            const doutoresFiltrados = termos.length === 0
+              ? summary.doutores
+              : summary.doutores.filter((d) => {
+                  const h = norm(d.nome);
+                  return termos.every((t) => h.includes(t));
+                });
+            return (
+              <section>
+                <div className="flex items-center gap-2 mb-4 flex-wrap">
+                  <Users className="text-burst-orange-bright" size={20} />
+                  <h3 className="font-display text-xl tracking-wider text-white">
+                    Análise por Doutor
+                  </h3>
+                  <span className="text-xs text-burst-muted">
+                    {buscaDoutor.trim()
+                      ? `${doutoresFiltrados.length} de ${summary.doutores.length} doutor(es)`
+                      : `${summary.doutores.length} doutor(es)`}
+                  </span>
+                  {/* Campo de busca */}
+                  <div className="ml-auto flex items-center gap-2 bg-black/30 border border-burst-border rounded-lg px-3 py-1.5 min-w-[200px] sm:min-w-[260px]">
+                    <Search size={13} className="text-burst-muted shrink-0" />
+                    <input
+                      value={buscaDoutor}
+                      onChange={(e) => setBuscaDoutor(e.target.value)}
+                      placeholder="Buscar doutor..."
+                      className="bg-transparent border-none outline-none text-sm text-white flex-1 placeholder:text-burst-muted min-w-0"
+                    />
+                    {buscaDoutor && (
+                      <button
+                        type="button"
+                        onClick={() => setBuscaDoutor('')}
+                        title="Limpar busca"
+                        className="text-burst-muted hover:text-white shrink-0"
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {doutoresFiltrados.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-burst-border bg-burst-card/40 p-8 text-center text-sm text-burst-muted">
+                    Nenhum doutor casa com "{buscaDoutor}"
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                    {doutoresFiltrados.map((d) => (
+                      <DoutorCard key={d.nome} doutor={d} />
+                    ))}
+                  </div>
+                )}
+              </section>
+            );
+          })()}
         </>
       )}
 

@@ -14,6 +14,7 @@ import { EventosTable } from '../design/EventosTable';
 import { EventosSemDesignerEditor } from '../design/EventosSemDesignerEditor';
 import { useUser, hasFullAccess } from '../../lib/userContext';
 import { nameMatchesScope } from '../../lib/monday';
+import { primeiroDesignerAtivo } from '../../config';
 
 type ModalKind = 'feitos' | 'manutencoes' | 'designers' | 'sem-designer' | null;
 type DrillKind = { designer: string; type: 'feitas' | 'manutencoes' } | null;
@@ -34,7 +35,19 @@ export function Design() {
   const eventosVisiveis = useMemo(() => {
     if (hasFullAccess(user)) return eventos;
     if (user.role === 'designer' && user.scope) {
-      return eventos.filter((e) => nameMatchesScope(user.scope!, e.designer_responsavel ?? ''));
+      // CONSISTÊNCIA com designMetrics.computeDesignMetrics: aquele agrupa
+      // eventos compostos (ex: "Felipe Moraes, Lais Beisheim") atribuindo
+      // ao PRIMEIRO designer ativo via primeiroDesignerAtivo. Se aqui só
+      // usássemos nameMatchesScope direto contra designer_responsavel, os
+      // combos com vírgula falham (a string completa não bate com o nome
+      // do designer logado) e os eventos somem da visão pessoal — mas o
+      // admin continua vendo eles (na visão geral). Daí 122 entregas no
+      // perfil dela vs 181 na visão admin. Agora ambos usam a mesma regra.
+      return eventos.filter((e) => {
+        const ativoLabel = primeiroDesignerAtivo(e.designer_responsavel);
+        if (!ativoLabel) return false;
+        return nameMatchesScope(user.scope!, ativoLabel);
+      });
     }
     return eventos;
   }, [eventos, user]);

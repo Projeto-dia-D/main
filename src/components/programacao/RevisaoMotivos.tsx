@@ -1,8 +1,13 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Check, EyeOff, RotateCcw, Ban, HelpCircle } from 'lucide-react';
 import { supabase, TABLE_NAME } from '../../lib/supabase';
-import { isTransferido } from '../../lib/metrics';
+import { isTransferido, isInterrompido } from '../../lib/metrics';
 import type { RelatorioBias } from '../../lib/types';
+import { useUser } from '../../lib/userContext';
+
+/** Tabela Supabase que persiste o "Manter como está". Inclui realtime — todos
+ *  os admins veem o mesmo estado e sincronizam quando alguém oculta um lead. */
+const OCULTOS_TABLE = 'revisao_ocultos';
 
 interface LeadRevisao {
   id: string;
@@ -17,14 +22,58 @@ interface LeadRevisao {
 /** Aba de curadoria semanal: lista TODOS os leads com motivo diferente de
  *  agendar_avaliacao (excluindo já desclassificados) e permite reclassificar. */
 export function RevisaoMotivos() {
+  const user = useUser();
   const [leads, setLeads] = useState<LeadRevisao[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filtro, setFiltro] = useState<string>('todos');
   // Ações ainda em andamento (otimistic UI)
   const [emAcao, setEmAcao] = useState<Map<string, 'mudar' | 'desclassificar' | null>>(new Map());
-  // IDs ocultos APENAS visualmente (botão "manter como está") — não afeta o banco
+  // IDs ocultos via "Manter como está" — persiste em Supabase (tabela
+  // revisao_ocultos) pra todos os admins compartilharem o mesmo estado.
+  // Realtime mantém o set atualizado quando outro admin oculta/restaura.
   const [ocultos, setOcultos] = useState<Set<string>>(new Set());
+
+  // Carrega ocultos do Supabase no mount + subscribe realtime
+  useEffect(() => {
+    let active = true;
+
+    async function carregarOcultos() {
+      const { data, error: err } = await supabase
+        .from(OCULTOS_TABLE)
+        .select('lead_id');
+      if (!active) return;
+      if (err) {
+        console.warn('[RevisaoMotivos] erro carregando ocultos:', err.message);
+        return;
+      }
+      setOcultos(new Set((data ?? []).map((r) => r.lead_id as string)));
+    }
+    carregarOcultos();
+
+    const channel = supabase
+      .channel('revisao_ocultos_rt_' + Date.now())
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: OCULTOS_TABLE },
+        (payload) => {
+          if (!active) return;
+          if (payload.eventType === 'INSERT') {
+            const id = (payload.new as { lead_id: string })?.lead_id;
+            if (id) setOcultos((prev) => new Set(prev).add(id));
+          } else if (payload.eventType === 'DELETE') {
+            const id = (payload.old as { lead_id: string })?.lead_id;
+            if (id) setOcultos((prev) => { const n = new Set(prev); n.delete(id); return n; });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      active = false;
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   async function carregar() {
     setLoading(true);
@@ -53,20 +102,36 @@ export function RevisaoMotivos() {
   }, []);
 
   // Filtra os leads que são transferência (já classificados como agendar etc.)
-  // — eles não devem aparecer aqui. Sobram dúvidas, interrompidos, sem_interesse, etc.
+  // ou chat interrompido (não tem o que revisar — lead simplesmente parou de
+  // responder, não é dúvida que vira agendamento). Sobram dúvidas reais,
+  // sem_interesse, e outros motivos ambíguos.
   const naoTransferencia = useMemo(() => {
-    return leads.filter((l) => !isTransferido(l as unknown as RelatorioBias));
+    return leads.filter((l) => {
+      const lead = l as unknown as RelatorioBias;
+      return !isTransferido(lead) && !isInterrompido(lead);
+    });
   }, [leads]);
 
-  // Agrupa por motivo (limpo): cada motivo único vira uma pill
+  // Agrupa por motivo VISÍVEL (limpo): conta apenas leads que ainda não
+  // foram ocultados pelo botão "Manter como está". Motivos zerados (todos
+  // ocultos) somem dos chips — sem ruído visual.
   const motivosUnicos = useMemo(() => {
     const map = new Map<string, number>();
     for (const l of naoTransferencia) {
+      if (ocultos.has(l.id)) continue;
       const m = l.motivoTransferencia.trim();
       map.set(m, (map.get(m) ?? 0) + 1);
     }
     return [...map.entries()].sort((a, b) => b[1] - a[1]); // mais frequente primeiro
-  }, [naoTransferencia]);
+  }, [naoTransferencia, ocultos]);
+
+  // Se o filtro selecionado desapareceu (zerou após ocultar), volta pra "todos"
+  // automaticamente — evita a tela "Nada pra revisar" com outros chips visíveis.
+  useEffect(() => {
+    if (filtro === 'todos') return;
+    const aindaTemMotivo = motivosUnicos.some(([m]) => m === filtro);
+    if (!aindaTemMotivo) setFiltro('todos');
+  }, [motivosUnicos, filtro]);
 
   const filtrados = useMemo(() => {
     let base = naoTransferencia.filter((l) => !ocultos.has(l.id));
@@ -106,9 +171,24 @@ export function RevisaoMotivos() {
     setLeads((prev) => prev.filter((l) => l.id !== lead.id));
   }
 
-  /** Manter como está: apenas oculta visualmente, não muda o banco. */
-  function manter(lead: LeadRevisao) {
+  /** Manter como está: persiste em revisao_ocultos (Supabase) pra todos os
+   *  admins verem o mesmo estado. Não mexe no motivoTransferencia do lead. */
+  async function manter(lead: LeadRevisao) {
+    // Optimistic UI: adiciona ao set local imediatamente
     setOcultos((prev) => new Set(prev).add(lead.id));
+    // Persiste no banco — realtime confirma pros outros admins
+    const { error: err } = await supabase
+      .from(OCULTOS_TABLE)
+      .upsert(
+        { lead_id: lead.id, ocultado_por: user.email, ocultado_at: new Date().toISOString() },
+        { onConflict: 'lead_id' },
+      );
+    if (err) {
+      console.warn('[RevisaoMotivos] erro persistindo oculto:', err.message);
+      // Reverte optimistic em caso de erro
+      setOcultos((prev) => { const n = new Set(prev); n.delete(lead.id); return n; });
+      alert('Erro ao salvar — tente novamente. ' + err.message);
+    }
   }
 
   return (

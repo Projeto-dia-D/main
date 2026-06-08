@@ -16,6 +16,7 @@ import { NotificationsProvider } from './lib/notificationsContext';
 import { Notificacoes } from './components/tabs/Notificacoes';
 import { SaudeCliente } from './components/tabs/SaudeCliente';
 import { Apresentacao } from './components/tabs/Apresentacao';
+import { Anuncios } from './components/tabs/Anuncios';
 
 const TAB_TITLES: Record<TabKey, string> = {
   apresentacao: 'Apresentação',
@@ -25,6 +26,7 @@ const TAB_TITLES: Record<TabKey, string> = {
   gestor: 'Gestor de Tráfego',
   calendario: 'Calendário',
   saude: 'Saúde do Cliente',
+  anuncios: 'Anúncios',
   notificacoes: 'Notificações',
 };
 
@@ -171,6 +173,7 @@ export default function App() {
             {active === 'calendario' && <Calendario />}
             {active === 'saude' && <SaudeCliente />}
             {active === 'apresentacao' && <Apresentacao />}
+            {active === 'anuncios' && <Anuncios />}
             {active === 'notificacoes' && <Notificacoes />}
           </div>
         </main>

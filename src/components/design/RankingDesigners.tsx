@@ -98,7 +98,11 @@ function RankingRow({
         </div>
         <div className="text-xs text-burst-muted">
           {designer.totalEventosFeito} entrega(s) •{' '}
-          {designer.totalEventosManutencao + designer.totalEventosManutencaoC} manutenção(ões) •{' '}
+          {designer.totalEventosManutencaoC} manut. cliente
+          {designer.totalEventosManutencao > 0 && (
+            <span className="text-burst-muted/60"> (+{designer.totalEventosManutencao} gestor)</span>
+          )}
+          {' • '}
           {designer.manutencoesUnicas} demanda(s) afetada(s)
         </div>
       </div>

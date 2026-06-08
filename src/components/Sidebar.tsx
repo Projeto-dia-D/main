@@ -1,9 +1,9 @@
-import { Code2, Palette, Headphones, Megaphone, CalendarDays, Bell, HeartPulse, ChevronLeft, ChevronRight, LayoutDashboard, type LucideIcon } from 'lucide-react';
+import { Code2, Palette, Headphones, Megaphone, CalendarDays, Bell, HeartPulse, ChevronLeft, ChevronRight, LayoutDashboard, MessageSquareText, type LucideIcon } from 'lucide-react';
 import { BrandTitle } from './BrandTitle';
 import { useUser, hasFullAccess } from '../lib/userContext';
 import { useNotifications } from '../lib/notificationsContext';
 
-export type TabKey = 'programacao' | 'design' | 'cs' | 'gestor' | 'calendario' | 'saude' | 'apresentacao' | 'notificacoes';
+export type TabKey = 'programacao' | 'design' | 'cs' | 'gestor' | 'calendario' | 'saude' | 'apresentacao' | 'notificacoes' | 'anuncios';
 
 interface Props {
   active: TabKey;
@@ -20,6 +20,7 @@ const ITEMS: { key: TabKey; label: string; icon: LucideIcon }[] = [
   { key: 'gestor', label: 'Gestor de Tráfego', icon: Megaphone },
   { key: 'calendario', label: 'Calendário', icon: CalendarDays },
   { key: 'saude', label: 'Saúde do Cliente', icon: HeartPulse },
+  { key: 'anuncios', label: 'Anúncios', icon: MessageSquareText },
   { key: 'notificacoes', label: 'Notificações', icon: Bell },
 ];
 
@@ -28,6 +29,7 @@ const ITEMS: { key: TabKey; label: string; icon: LucideIcon }[] = [
  * nem Notificações. Programador vê tudo (programadores ajudam no design).
  *
  * "Notificações" é só pra hasFullAccess (admin + super programador).
+ * "Anúncios" e ferramenta de dev — programador (qualquer) + admin/super.
  */
 function visibleTabsForRole(role: string | null | undefined): Set<TabKey> {
   if (role === 'cs') return new Set(['programacao', 'cs', 'calendario']);
@@ -35,7 +37,8 @@ function visibleTabsForRole(role: string | null | undefined): Set<TabKey> {
   if (role === 'designer') return new Set(['design', 'calendario']);
   // programador comum (sem viewAll): vê o que faz sentido pra ele
   // — Saúde do Cliente é exclusivo pra admin/super programador
-  return new Set(['programacao', 'design', 'cs', 'gestor', 'calendario']);
+  // — Anúncios e dev-tool, todo programador ve
+  return new Set(['programacao', 'design', 'cs', 'gestor', 'calendario', 'anuncios']);
 }
 
 export function Sidebar({ active, onChange, collapsed, onToggleCollapsed }: Props) {
@@ -44,7 +47,7 @@ export function Sidebar({ active, onChange, collapsed, onToggleCollapsed }: Prop
   const notifCount = notifications.length;
   // Admin/super programador: tudo + notificações. Outros: tabs limitados.
   const visible = hasFullAccess(user)
-    ? new Set<TabKey>(['apresentacao', 'programacao', 'design', 'cs', 'gestor', 'calendario', 'saude', 'notificacoes'])
+    ? new Set<TabKey>(['apresentacao', 'programacao', 'design', 'cs', 'gestor', 'calendario', 'saude', 'anuncios', 'notificacoes'])
     : visibleTabsForRole(user.role);
   const items = ITEMS.filter((it) => visible.has(it.key));
   return (

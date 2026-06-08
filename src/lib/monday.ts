@@ -1,4 +1,4 @@
-import { config } from '../config';
+import { config, getCsOverride, isCsOculto, resolveCsFromPeople } from '../config';
 import { supabase } from './supabase';
 
 const MONDAY_URL = 'https://api.monday.com/v2';
@@ -111,15 +111,13 @@ interface MetaResp {
   error_message?: string;
 }
 
-interface GroupItemsResp {
+interface BoardItemsResp {
   data?: {
     boards?: Array<{
-      groups?: Array<{
-        items_page: {
-          cursor: string | null;
-          items: ItemRaw[];
-        };
-      }>;
+      items_page: {
+        cursor: string | null;
+        items: ItemRaw[];
+      };
     }>;
   };
   errors?: Array<{ message: string }>;
@@ -225,25 +223,23 @@ const META_QUERY = `
   }
 `;
 
-const GROUP_ITEMS_QUERY = `
-  query ($boardId: ID!, $groupId: String!, $colIds: [String!], $limit: Int!) {
+const BOARD_ITEMS_QUERY = `
+  query ($boardId: ID!, $colIds: [String!], $limit: Int!) {
     boards(ids: [$boardId]) {
-      groups(ids: [$groupId]) {
-        items_page(limit: $limit) {
-          cursor
-          items {
+      items_page(limit: $limit) {
+        cursor
+        items {
+          id
+          name
+          updated_at
+          group { id title }
+          column_values(ids: $colIds) {
             id
-            name
-            updated_at
-            group { id title }
-            column_values(ids: $colIds) {
-              id
-              text
-              type
-              value
-              ... on FormulaValue { display_value }
-              ... on MirrorValue { display_value }
-            }
+            text
+            type
+            value
+            ... on FormulaValue { display_value }
+            ... on MirrorValue { display_value }
           }
         }
       }
@@ -273,20 +269,29 @@ const NEXT_PAGE_QUERY = `
   }
 `;
 
-async function fetchItemsForGroup(
+/**
+ * Pagina TODOS os itens do board de uma vez (board-level), sequencialmente.
+ *
+ * IMPORTANTE: NÃO buscar grupo a grupo em paralelo. O Monday tem rate limit
+ * por campo no `items_page`/`next_items_page` — disparar os ~20 grupos do board
+ * simultaneamente (Promise.all) estoura com "Rate limit exceeded for the field"
+ * e o load volta parcial (ex: 290 de 753), acionando o guard anti-regressão que
+ * descarta tudo. Como cada item já traz `group { id title }`, uma única
+ * paginação do board inteiro dá a mesma informação sem o burst. Mesmo padrão de
+ * fetchBiaSoftData.
+ */
+async function fetchAllBoardItems(
   boardId: string,
-  groupId: string,
   colIds: string[]
 ): Promise<ItemRaw[]> {
   const out: ItemRaw[] = [];
 
-  const first = await gql<GroupItemsResp>(GROUP_ITEMS_QUERY, {
+  const first = await gql<BoardItemsResp>(BOARD_ITEMS_QUERY, {
     boardId,
-    groupId,
     colIds,
     limit: PAGE_LIMIT,
   });
-  const page = first.data?.boards?.[0]?.groups?.[0]?.items_page;
+  const page = first.data?.boards?.[0]?.items_page;
   if (!page) return out;
   out.push(...page.items);
 
@@ -330,11 +335,15 @@ export function isClientChurned(client: MondayClient): boolean {
 /**
  * Cliente está PAUSADO se status atual ou grupo do board contém "pausa".
  * Pausados não rodam campanhas → não precisam de vínculo Meta.
+ *
+ * NÃO inclui "Aviso prévio 60 dias" — esses clientes AINDA ESTÃO ATIVOS
+ * (notificaram que vão sair em 60 dias mas continuam pagando e a Bia segue
+ * rodando). Tratá-los como pausados sumia eles de banner/painéis indevidamente.
  */
 export function isClientPausado(client: MondayClient): boolean {
   const s = normalize(client.status);
   const g = normalize(client.groupTitle);
-  return s.includes('pausa') || g.includes('pausa') || g.includes('aviso pr');
+  return s.includes('pausa') || g.includes('pausa');
 }
 
 /**
@@ -392,20 +401,19 @@ export async function fetchMondayClients(): Promise<FetchClientsResult> {
   const colStatus = findColumnId(board.columns, COL_STATUS_TITLES);
   const colDataChurn = findColumnId(board.columns, COL_DATA_CHURN_TITLES);
   const colDataEntrada = findColumnId(board.columns, COL_DATA_ENTRADA_TITLES);
-  const colIds = [colTipo, colCs, colGestor, colUazapi, colStatus, colDataChurn, colDataEntrada].filter(
+  // Coluna "CS" (people) — onde o time põe o novo CS quando o antigo sai (a
+  // "CS do projeto"/status às vezes fica desatualizada com o CS que saiu).
+  // ID fixo: o título "CS" colidiria com a coluna de status no findColumnId.
+  const COL_CS_PEOPLE = 'pessoas_2__1';
+  const colIds = [colTipo, colCs, colGestor, colUazapi, colStatus, colDataChurn, colDataEntrada, COL_CS_PEOPLE].filter(
     (x): x is string => Boolean(x)
   );
 
-  // 2) Items por grupo (paralelo), trazendo apenas as 3 colunas resolvidas
-  const groupResults = await Promise.all(
-    board.groups.map((g) =>
-      fetchItemsForGroup(boardId, g.id, colIds).catch((e) => {
-        console.warn(`[Monday] grupo "${g.title}" falhou:`, e);
-        return [] as ItemRaw[];
-      })
-    )
-  );
-  const allItems = groupResults.flat();
+  // 2) Items do board inteiro, paginados sequencialmente (board-level).
+  //    NÃO fan-out por grupo — ver fetchAllBoardItems (evita "Rate limit
+  //    exceeded for the field" do Monday). Cada item já traz group{id title}
+  //    pro filtro de grupo/tipo abaixo.
+  const allItems = await fetchAllBoardItems(boardId, colIds);
 
   const groupTitles = new Set(board.groups.map((g) => g.title));
   const groupsIncluir = new Set(
@@ -431,7 +439,13 @@ export async function fetchMondayClients(): Promise<FetchClientsResult> {
       name: item.name.trim(),
       groupTitle: item.group.title,
       tipoCliente: tipo,
-      cs: readColText(item, colCs),
+      // CS: override explícito (linkados-ativos com piso) > resolução
+      // automática da coluna "CS" people pra quem está como CS oculto (Yasmin)
+      // > valor do status. '' quando o CS saiu e não há novo responsável.
+      cs: getCsOverride(item.id)
+        ?? (isCsOculto(readColText(item, colCs))
+          ? (resolveCsFromPeople(readColText(item, COL_CS_PEOPLE)) ?? '')
+          : readColText(item, colCs)),
       gestor: readColText(item, colGestor),
       uazapiToken: readColText(item, colUazapi),
       status: readColText(item, colStatus),
@@ -492,6 +506,11 @@ function isFaseAtiva(fase: string | null | undefined): boolean {
   const n = normalize(fase);
   if (!n) return false;
   return BIA_FASES_ATIVAS.some((f) => n.includes(f));
+}
+
+/** Versao publica de isFaseAtiva — exportada pra outros modules (metrics.ts) */
+export function isFaseAtivaPublic(fase: string | null | undefined): boolean {
+  return isFaseAtiva(fase);
 }
 
 const BIA_LIST_QUERY = `

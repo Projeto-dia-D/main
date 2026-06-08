@@ -22,6 +22,9 @@ export interface DoutorMetrics {
   ultimoLead: string | null;
   ultimaTransferencia: string | null;
   diasSemTransferencia: number;
+  /** Tempo (ms) com a Bia ATIVA desde a entrada do cliente (exclui manutenção).
+   *  Formate com formatBiaAtiva(). null se não há cliente/entrada resolvidos. */
+  biaAtivaMs?: number | null;
   status: 'ATIVO' | 'SEM TRANSFERENCIA';
   evolucao: { date: string; taxa: number }[];
   leads: RelatorioBias[];

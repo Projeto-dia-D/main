@@ -8,7 +8,24 @@ interface Props {
   onClickClient?: (cm: ClientMetrics) => void;
 }
 
-type FiltroVisao = 'todos' | 'ativos' | 'problemas' | 'melhores';
+type FiltroVisao = 'todos' | 'ativosAgora' | 'ativosNoDiaD' | 'problemas' | 'melhores' | 'piores';
+
+/** "Esteve ativo em ALGUM momento do Dia D" — heurística: teve spend OU mensagens
+ *  no período. Cobre clientes que estavam ativos no início do mês e foram pra
+ *  manutenção/churn no meio (ex: Elevare, que rodou parte do Dia D e depois
+ *  virou manutenção — ainda assim teve volume no período). */
+function esteveAtivoNoPeriodo(c: ClientMetrics): boolean {
+  return c.spend > 0 || c.mensagensIniciadas > 0 || c.transferencias > 0;
+}
+
+/** Normaliza string pra busca acent-insensitive. "Bárbara" → "barbara". */
+function norm(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .trim();
+}
 
 /**
  * Versao "grid de cards" da lista de clientes — substitui a ClientesTable
@@ -18,15 +35,25 @@ type FiltroVisao = 'todos' | 'ativos' | 'problemas' | 'melhores';
  *
  * Filtros visuais:
  *  - Todos: lista inteira
- *  - Ativos: so com Bia ativa
- *  - Problemas: gastou mas 0 transf (dinheiro queimando)
+ *  - Ativos agora: Bia ativa NESTE MOMENTO (status atual)
+ *  - Ativos no Dia D: esteve ativo em ALGUM momento do período (teve spend
+ *    ou mensagens — pega quem rodou parte do mês mesmo se virou manutenção)
  *  - Melhores: top performers (transf > 0, ordenado por CPT)
+ *  - Piores: pior performance — gastou mas (0 transf OU CPT > 170).
+ *           Bate com a logica do "Piores" do PainelMini de gestor/cs.
+ *  - Problemas: subset de "Piores" — so 0 transf (dinheiro 100% queimado).
+ *              Mantido como filtro mais restritivo.
+ *
+ * Em todos os filtros "negativos" (Piores, Problemas), excluimos clientes
+ * onde > 50% dos chats foram interrompidos pela CRC do cliente (atendimento
+ * manual — nao da pra avaliar funil da Bia nesse caso).
  */
 export function ClientesGridView({ clients, onClickClient }: Props) {
   const [query, setQuery] = useState('');
-  // Default = 'ativos' — abre mostrando so quem ta valendo no projeto.
-  // Pra ver inativos/churn, usuario clica em "Todos" no chip de cima.
-  const [filtro, setFiltro] = useState<FiltroVisao>('ativos');
+  // Default = 'ativosAgora' — abre mostrando so quem ta com Bia ATIVA agora.
+  // Outras opções: 'ativosNoDiaD' (esteve ativo em algum momento do período),
+  // 'todos' (inclui churn/pausa).
+  const [filtro, setFiltro] = useState<FiltroVisao>('ativosAgora');
 
   // Helper: cliente onde > 50% dos chats foram interrompidos pela CRC.
   // "Chat interrompido" = CRC do cliente pegou o atendimento manualmente —
@@ -38,33 +65,46 @@ export function ClientesGridView({ clients, onClickClient }: Props) {
     return (c.chatsInterrompidos / total) > 0.5;
   };
 
+  // Predicado "piores" — bate com a logica do rankClients dos PainelMini
+  // (gestor.tsx e cs.tsx): gastou mas (0 transf OU CPT alto), excluindo CRC.
+  const isPior = (c: ClientMetrics) =>
+    !c.inactive && c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 170) && !isCrcAtendendo(c);
+
   const counts = useMemo(() => {
-    const ativos = clients.filter((c) => !c.inactive);
-    const problemas = ativos.filter((c) => c.spend > 0 && c.transferencias === 0 && !isCrcAtendendo(c));
-    const melhores = ativos.filter((c) => c.transferencias > 0);
+    const ativosAgora = clients.filter((c) => !c.inactive);
+    const ativosNoDiaD = clients.filter(esteveAtivoNoPeriodo);
+    const problemas = ativosAgora.filter((c) => c.spend > 0 && c.transferencias === 0 && !isCrcAtendendo(c));
+    const melhores = ativosAgora.filter((c) => c.transferencias > 0);
+    const piores = ativosAgora.filter(isPior);
     return {
       todos: clients.length,
-      ativos: ativos.length,
+      ativosAgora: ativosAgora.length,
+      ativosNoDiaD: ativosNoDiaD.length,
       problemas: problemas.length,
       melhores: melhores.length,
+      piores: piores.length,
     };
   }, [clients]);
 
   const filtered = useMemo(() => {
     let base = clients;
-    if (filtro === 'ativos') base = base.filter((c) => !c.inactive);
+    if (filtro === 'ativosAgora') base = base.filter((c) => !c.inactive);
+    else if (filtro === 'ativosNoDiaD') base = base.filter(esteveAtivoNoPeriodo);
     else if (filtro === 'problemas') base = base.filter((c) => !c.inactive && c.spend > 0 && c.transferencias === 0 && !isCrcAtendendo(c));
     else if (filtro === 'melhores') base = base.filter((c) => !c.inactive && c.transferencias > 0);
+    else if (filtro === 'piores') base = base.filter(isPior);
 
     if (query.trim()) {
-      const q = query.toLowerCase();
-      base = base.filter(
-        (c) =>
-          c.client.name.toLowerCase().includes(q) ||
-          (c.client.cs ?? '').toLowerCase().includes(q) ||
-          (c.client.gestor ?? '').toLowerCase().includes(q) ||
-          (c.doutorMatch ?? '').toLowerCase().includes(q)
-      );
+      // Busca acent-insensitive ("barbara" acha "Bárbara", "ana" acha "Aná")
+      // + multi-termo (separa por espaco e exige TODOS os termos baterem em
+      // qualquer campo). Mesma logica do SearchableAccountSelect.
+      const terms = norm(query).split(/\s+/).filter(Boolean);
+      base = base.filter((c) => {
+        const haystack = norm(
+          `${c.client.name} ${c.client.cs ?? ''} ${c.client.gestor ?? ''} ${c.doutorMatch ?? ''} ${c.client.groupTitle ?? ''}`
+        );
+        return terms.every((t) => haystack.includes(t));
+      });
     }
 
     // Ordenacao padrao: ativos primeiro, depois transferencias desc, depois spend desc
@@ -94,8 +134,10 @@ export function ClientesGridView({ clients, onClickClient }: Props) {
 
         <div className="flex items-center gap-1.5 flex-wrap">
           <ChipFiltro label="Todos" count={counts.todos} active={filtro === 'todos'} onClick={() => setFiltro('todos')} accent="muted" icon={<Users size={11} />} />
-          <ChipFiltro label="Ativos" count={counts.ativos} active={filtro === 'ativos'} onClick={() => setFiltro('ativos')} accent="info" icon={<Activity size={11} />} />
+          <ChipFiltro label="Ativos agora" count={counts.ativosAgora} active={filtro === 'ativosAgora'} onClick={() => setFiltro('ativosAgora')} accent="info" icon={<Activity size={11} />} />
+          <ChipFiltro label="Ativos no Dia D" count={counts.ativosNoDiaD} active={filtro === 'ativosNoDiaD'} onClick={() => setFiltro('ativosNoDiaD')} accent="info" icon={<Activity size={11} />} />
           <ChipFiltro label="Melhores" count={counts.melhores} active={filtro === 'melhores'} onClick={() => setFiltro('melhores')} accent="success" icon={<Trophy size={11} />} />
+          <ChipFiltro label="Piores" count={counts.piores} active={filtro === 'piores'} onClick={() => setFiltro('piores')} accent="danger" icon={<AlertTriangle size={11} />} />
           <ChipFiltro label="Problemas" count={counts.problemas} active={filtro === 'problemas'} onClick={() => setFiltro('problemas')} accent="danger" icon={<AlertTriangle size={11} />} />
         </div>
       </div>

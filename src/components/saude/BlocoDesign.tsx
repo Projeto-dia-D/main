@@ -78,7 +78,7 @@ export function BlocoDesign({ design, designEventos = [] }: Props) {
             label="Manutenções"
             value={design.manutencoes}
             sub={`${design.pctManutencao.toFixed(1)}% do total`}
-            tone={design.pctManutencao < 15 ? 'green' : design.pctManutencao < 19 ? 'orange' : 'red'}
+            tone={design.pctManutencao <= 15 ? 'green' : design.pctManutencao < 19 ? 'orange' : 'red'}
           />
           <HistStat
             label="Relacionamento"

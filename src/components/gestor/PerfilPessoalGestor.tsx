@@ -1,9 +1,7 @@
 import { useMemo } from 'react';
 import {
-  Trophy,
   TrendingDown,
   TrendingUp,
-  AlertTriangle,
   MessageCircle,
   ArrowDownRight,
   DollarSign,
@@ -23,6 +21,7 @@ import {
 import { AnimatedNumber } from '../AnimatedNumber';
 import { Avatar } from '../Avatar';
 import { useUserPhotos } from '../../hooks/useUserPhotos';
+import { ListasClientes } from './ListasClientes';
 
 interface Props {
   gestor: GestorMetrics;
@@ -68,32 +67,6 @@ export function PerfilPessoalGestor({
       total: ranked.length,
     };
   }, [sectorSummary.gestores, gestor.gestor]);
-
-  const { melhores, piores } = useMemo(() => {
-    const ativos = gestor.clients.filter((c) => !c.inactive);
-
-    const melhores = [...ativos]
-      .filter((c) => c.transferencias > 0)
-      .sort((a, b) => {
-        if (b.transferencias !== a.transferencias) {
-          return b.transferencias - a.transferencias;
-        }
-        return (a.cpt ?? Infinity) - (b.cpt ?? Infinity);
-      })
-      .slice(0, 5);
-
-    // Piores: ordena por SPEND desc — quem gastou mais sem retorno é o pior.
-    // Empate em spend cai pra CPT desc (mais caro pior).
-    const piores = [...ativos]
-      .filter((c) => c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 170))
-      .sort((a, b) => {
-        if (b.spend !== a.spend) return b.spend - a.spend;
-        return (b.cpt ?? 0) - (a.cpt ?? 0);
-      })
-      .slice(0, 5);
-
-    return { melhores, piores };
-  }, [gestor.clients]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -229,26 +202,11 @@ export function PerfilPessoalGestor({
         </div>
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        <ClientesPanel
-          title="Melhores clientes"
-          subtitle="Maior número de transferências"
-          icon={<Trophy size={18} className="text-green-400" />}
-          tone="success"
-          clients={melhores}
-          emptyMsg="Nenhum cliente com transferências no período."
-          onClickCliente={onClickCliente}
-        />
-        <ClientesPanel
-          title="Piores clientes"
-          subtitle="Gastaram mas converteram pouco — precisam de atenção"
-          icon={<AlertTriangle size={18} className="text-red-400" />}
-          tone="danger"
-          clients={piores}
-          emptyMsg="Todos seus clientes estão convertendo bem 🎉"
-          onClickCliente={onClickCliente}
-        />
-      </div>
+      <ListasClientes
+        clients={gestor.clients}
+        onClickCliente={onClickCliente}
+        totalLabelSuffix="sob sua gestão"
+      />
     </div>
   );
 }
@@ -310,86 +268,3 @@ function BigStatText({
   );
 }
 
-function ClientesPanel({
-  title, subtitle, icon, tone, clients, emptyMsg, onClickCliente,
-}: {
-  title: string; subtitle: string; icon: React.ReactNode;
-  tone: 'success' | 'danger'; clients: ClientMetrics[]; emptyMsg: string;
-  onClickCliente?: (cm: ClientMetrics) => void;
-}) {
-  const borderCls = tone === 'success' ? 'border-green-500/40' : 'border-red-500/40';
-  return (
-    <section className={`rounded-2xl bg-burst-card border ${borderCls} p-5 animate-slide-up`}>
-      <div className="flex items-start gap-3 mb-4">
-        {icon}
-        <div className="min-w-0">
-          <h3 className="font-display text-xl text-white tracking-wide">{title}</h3>
-          <p className="text-xs text-burst-muted mt-0.5">{subtitle}</p>
-        </div>
-      </div>
-      {clients.length === 0 ? (
-        <div className="text-burst-muted text-sm py-4 text-center">{emptyMsg}</div>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {clients.map((c, idx) => (
-            <ClienteRow
-              key={c.client.id}
-              cm={c}
-              rank={idx + 1}
-              tone={tone}
-              onClick={onClickCliente ? () => onClickCliente(c) : undefined}
-            />
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-function ClienteRow({
-  cm, rank, tone, onClick,
-}: {
-  cm: ClientMetrics; rank: number; tone: 'success' | 'danger'; onClick?: () => void;
-}) {
-  const rankBg =
-    tone === 'success'
-      ? 'bg-green-500/15 text-green-400 border-green-500/30'
-      : 'bg-red-500/15 text-red-400 border-red-500/30';
-
-  const cls = 'flex items-center gap-3 rounded-lg bg-black/30 border border-burst-border px-3 py-2.5 transition-colors w-full';
-  const inner = (
-    <>
-      <span className={`flex items-center justify-center w-6 h-6 rounded-md text-xs font-bold border ${rankBg}`}>
-        {rank}
-      </span>
-      <div className="flex-1 min-w-0 text-left">
-        <div className="text-sm text-white truncate font-medium">{cm.client.name}</div>
-        <div className="text-[11px] text-burst-muted">
-          {cm.transferencias} transf. • {cm.mensagensIniciadas} msg • {brl(cm.spend)}
-        </div>
-      </div>
-      <div className="text-right shrink-0">
-        <div className={['font-display text-lg', tone === 'success' ? 'text-green-400' : 'text-red-400'].join(' ')}>
-          {cm.cpt === null ? '—' : brl(cm.cpt)}
-        </div>
-        <div className="text-[10px] uppercase tracking-wider text-burst-muted">CPT</div>
-      </div>
-    </>
-  );
-
-  if (onClick) {
-    return (
-      <li>
-        <button
-          type="button"
-          onClick={onClick}
-          title={`Ver detalhes de ${cm.client.name}`}
-          className={`${cls} cursor-pointer hover:bg-black/50 hover:border-burst-orange/60 focus:outline-none focus:ring-1 focus:ring-burst-orange/40`}
-        >
-          {inner}
-        </button>
-      </li>
-    );
-  }
-  return <li className={`${cls} hover:bg-black/40`}>{inner}</li>;
-}

@@ -31,6 +31,9 @@ import { VinculacoesModal } from '../gestor/VinculacoesModal';
 import { DiagnosticoOrfaos } from '../gestor/DiagnosticoOrfaos';
 import { DiagnosticoCampanhasOrfas } from '../gestor/DiagnosticoCampanhasOrfas';
 import { DoutoresSemVinculoMeta } from '../gestor/DoutoresSemVinculoMeta';
+import { ListasClientes } from '../gestor/ListasClientes';
+import { RankingPessoasCards } from '../gestor/RankingPessoasCards';
+import { brl, tierForCpt, tierLabelCpt } from '../../lib/gestorMetrics';
 
 type ModalKind = 'clientes' | 'campanhas' | 'gestores' | 'vinculos' | null;
 
@@ -54,6 +57,10 @@ export function GestorTrafego() {
   const [drillClient, setDrillClient] = useState<{ clientId: string; gestorNome: string; fromAllClientes?: boolean } | null>(null);
   // Drill em TODOS os clientes de UM gestor (abre popup grande com a lista)
   const [drillAllClientesGestor, setDrillAllClientesGestor] = useState<string | null>(null);
+  // Quando o modal "vinculos" é aberto via banner "X doutores sem vínculo",
+  // guarda os IDs daqueles 16 (ou N) clientes pra restringir a tabela. Quando
+  // abre pelo botão padrão "Vinculações", fica null = mostra todos.
+  const [vinculosPreFilter, setVinculosPreFilter] = useState<Set<string> | null>(null);
   const { lookup: lookupPhoto } = useUserPhotos();
   const { report: reportNotification, resolve: resolveNotification } = useNotifications();
 
@@ -61,7 +68,13 @@ export function GestorTrafego() {
   const {
     clients: mondayClients,
     allClients: mondayAllClients,
+    // `clientsAll` é o universo SEM filtro de grupo/tipo (inclui "Plano normal",
+    // clientes Bia tipo "Normal" puro, etc). Necessário pro banner "doutores
+    // sem vínculo Meta" e pro modal de Vinculações — senão clientes como a
+    // Colnaghi (Plano normal) ficam invisíveis pra vincular.
+    clientsAll: mondayClientsAll,
     biaActiveIds,
+    biaAllIds,
     biaTimelineByClientId,
     biaFaseByClientId,
     loading: mondayLoading,
@@ -115,14 +128,18 @@ export function GestorTrafego() {
   // vincular uma conta órfã a um cliente "inativo", o spend dele entre nas
   // métricas imediatamente — sem precisar esperar voltar pra fase ativa.
   const clientesParaMetricas = useMemo(() => {
-    if (mondayAllClients.length === 0) return mondayClients;
+    // Usa clientsAll (universo TOTAL) — antes era mondayAllClients que já é
+    // filtrado por grupo "Plano à vista" + tipo "Normal + Bia Soft". Clientes
+    // de "Plano normal" tipo "Normal" (ex: Colnaghi) sumiam mesmo tendo
+    // vínculo Meta salvo.
+    if (mondayClientsAll.length === 0) return mondayClients;
     const idsAtivos = new Set(mondayClients.map((c) => c.id));
     const idsComLink = new Set(links.map((l) => l.monday_client_id));
-    const extras = mondayAllClients.filter(
+    const extras = mondayClientsAll.filter(
       (c) => idsComLink.has(c.id) && !idsAtivos.has(c.id)
     );
     return extras.length === 0 ? mondayClients : [...mondayClients, ...extras];
-  }, [mondayClients, mondayAllClients, links]);
+  }, [mondayClients, mondayClientsAll, links]);
 
   const fullSummary = useMemo(
     () =>
@@ -220,6 +237,7 @@ export function GestorTrafego() {
         inactive: false,
         spendBruto: 0,
         spendExcluido: 0,
+        spendExcluidoCrc: 0,
         periodosManutencao: [],
       }))
     ),
@@ -402,11 +420,27 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
       {/* Banner: doutores ATIVOS (não churn/pausa/jurídico) sem vínculo Meta.
           So aparece pra admin/super programador (info de manutencao do sistema,
           gestor comum nao precisa ver). */}
-      {hasFullAccess(user) && !linksMissingTable && !mondayLoading && mondayAllClients.length > 0 && (
+      {hasFullAccess(user) && !linksMissingTable && !mondayLoading && mondayClientsAll.length > 0 && (
         <DoutoresSemVinculoMeta
-          allClients={mondayAllClients}
+          // Usa clientsAll (universo TOTAL do main board) — sem isso, clientes
+          // de grupo "Plano normal" (tipo Colnaghi) ficavam invisíveis. O
+          // componente filtra com biaAllIds pra só mostrar quem roda Bia.
+          allClients={mondayClientsAll}
           links={links}
-          onAbrirVinculacoes={() => setOpenModal('vinculos')}
+          biaAllIds={biaAllIds}
+          onAbrirVinculacoes={() => {
+            // Mesma regra do banner: Bia Soft + elegível + sem vínculo.
+            const linkedIds = new Set(links.map((l) => l.monday_client_id));
+            const semVinculoIds = new Set(
+              mondayClientsAll
+                .filter((c) => biaAllIds.has(c.id))
+                .filter((c) => isClientElegivelMeta(c))
+                .filter((c) => !linkedIds.has(c.id))
+                .map((c) => c.id),
+            );
+            setVinculosPreFilter(semVinculoIds);
+            setOpenModal('vinculos');
+          }}
         />
       )}
 
@@ -443,6 +477,44 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
                 onOpenClientes={() => setOpenModal('clientes')}
                 onOpenCampanhas={() => setOpenModal('campanhas')}
                 onOpenGestores={() => setOpenModal('gestores')}
+              />
+
+              {/* === RANKING COMPACTO DOS GESTORES (cards horizontais com foto)
+                  Estilo Apresentação — comparação rápida antes dos PainelMini.
+                  Ordenado por CPT crescente (melhores primeiro). */}
+              <RankingPessoasCards
+                titulo="Ranking dos Gestores"
+                subtitulo={`${summary.gestores.length} gestor(es) ordenados por melhor CPT`}
+                pessoas={[...summary.gestores]
+                  .sort((a, b) => (a.cpt ?? Infinity) - (b.cpt ?? Infinity))
+                  .map((g) => ({
+                    id: g.gestor,
+                    nome: g.gestor,
+                    photoUrl: lookupPhoto(g.gestor),
+                    metricaPrincipal: g.cpt !== null ? brl(g.cpt) : '—',
+                    metricaLabel: 'CPT',
+                    tier: g.cpt !== null ? tierForCpt(g.cpt) : 0,
+                    tierLabel: tierLabelCpt(g.cpt !== null ? tierForCpt(g.cpt) : 0),
+                    onClick: () => setDrillAllClientesGestor(g.gestor),
+                  }))}
+              />
+
+              {/* === LISTAS AGREGADAS DE TODOS OS CLIENTES (Melhores/Piores/
+                  Menos transf/Menos leads + tabela completa) — visível pra
+                  admin/super programador apenas. Universo: clientes de todos
+                  os gestores. `clientsFora` não entra (sem métricas computadas). */}
+              <ListasClientes
+                clients={summary.gestores.flatMap((g) => g.clients)}
+                onClickCliente={(cm) => {
+                  const gestorDoClient = summary.gestores.find((g) =>
+                    g.clients.some((cl) => cl.client.id === cm.client.id),
+                  );
+                  setDrillClient({
+                    clientId: cm.client.id,
+                    gestorNome: gestorDoClient?.gestor ?? '(sem gestor)',
+                  });
+                }}
+                totalLabelSuffix="cliente(s) no time inteiro"
               />
 
               {summary.gestores.length > 0 && (
@@ -573,13 +645,22 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
 
       <Modal
         open={openModal === 'vinculos'}
-        onClose={() => setOpenModal(null)}
+        onClose={() => {
+          setOpenModal(null);
+          // Limpa o pré-filtro pra que a próxima abertura (botão normal)
+          // mostre todos os clientes.
+          setVinculosPreFilter(null);
+        }}
         title="Vincular Contas Meta ↔ Clientes Monday"
         subtitle="Carrega contas por gestor sob demanda • busca por nome no campo de conta • salva direto no banco"
         maxWidth="max-w-6xl"
       >
         <VinculacoesModal
-          clients={mondayClients}
+          // Sempre passa o universo COMPLETO (clientsAll — TUDO do main, sem
+          // filtro de grupo/tipo) e deixa o modal filtrar pelos critérios de
+          // elegibilidade (Bia Soft + não churn + não jurídico), exceto pelos
+          // já vinculados — que continuam visíveis pra limpar/editar.
+          clients={mondayClientsAll}
           loadedAccounts={loadedAccounts}
           accountsLoading={accountsLoading}
           accountsErrors={accountsErrors}
@@ -588,6 +669,9 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
           links={links}
           onLink={setLink}
           onUnlink={removeLink}
+          restrictToClientIds={vinculosPreFilter ?? undefined}
+          initialOnlyUnlinked={vinculosPreFilter !== null}
+          biaAllIds={biaAllIds}
         />
       </Modal>
 

@@ -163,8 +163,9 @@ export function PainelGeralDesign({ summary, lastUpdate, onOpenFeitos, onOpenMan
           </div>
 
           <div className="text-[11px] text-burst-muted/70">
-            <span className="text-white/80">{summary.totalEventosManutencao + summary.totalEventosManutencaoC}</span> eventos
-            de manutenção no período
+            <span className="text-white/80">{summary.totalEventosManutencaoC}</span> eventos do cliente
+            {' • '}
+            <span className="text-white/60">{summary.totalEventosManutencao + summary.totalEventosManutencaoC}</span> no total c/ gestor
           </div>
         </div>
 
@@ -180,8 +181,9 @@ export function PainelGeralDesign({ summary, lastUpdate, onOpenFeitos, onOpenMan
           <StatCard
             icon={RefreshCw}
             label="Manutenções (eventos)"
-            value={summary.totalEventosManutencao + summary.totalEventosManutencaoC}
+            value={summary.totalEventosManutencaoC}
             sublabel={`${summary.manutencoesUnicas} demandas únicas afetadas`}
+            sublabel2={`${summary.totalEventosManutencao + summary.totalEventosManutencaoC} no total (c/ gestor)`}
             onClick={onOpenManutencoes}
           />
           <StatCard
@@ -201,6 +203,7 @@ function StatCard({
   label,
   value,
   sublabel,
+  sublabel2,
   accent,
   onClick,
 }: {
@@ -208,6 +211,9 @@ function StatCard({
   label: string;
   value: number;
   sublabel?: string;
+  /** Linha extra abaixo de `sublabel` (usado pra mostrar o total quando o
+   *  número principal exibe um subconjunto, ex: manut. do cliente vs total). */
+  sublabel2?: string;
   accent?: boolean;
   onClick?: () => void;
 }) {
@@ -224,6 +230,9 @@ function StatCard({
         <AnimatedNumber value={value} className="font-display text-3xl text-white" />
         {sublabel && (
           <span className="text-[10px] text-burst-muted/70">{sublabel}</span>
+        )}
+        {sublabel2 && (
+          <span className="text-[10px] text-burst-muted/50">{sublabel2}</span>
         )}
       </div>
       <ChevronRight size={18} className="text-burst-muted group-hover:text-burst-orange-bright transition-colors" />

@@ -1,7 +1,7 @@
 import type { DateRange } from './metrics';
 import type { SalaryTier } from './types';
 import { countWorkingDays } from './holidays';
-import { primeiroDesignerAtivo } from '../config';
+import { primeiroDesignerAtivo, getDesignerInicio } from '../config';
 import { diasUteisAtestados, type Atestado } from './atestados';
 
 export interface DesignEvento {
@@ -75,16 +75,16 @@ export interface DesignSummary {
 // Faixas salariais (DISTRIBUIR PROSPERIDADE — Designer)
 // ============================================================
 
-// DEMANDAS/DIA: acima de 12 → 1 salário; 8-12 → 0,5; abaixo de 8 → 0
+// DEMANDAS/DIA: 12 ou mais → 1 salário; 8 a <12 → 0,5; abaixo de 8 → 0
 export function tierForDemandasDia(perDia: number): SalaryTier {
-  if (perDia > 12) return 1;
+  if (perDia >= 12) return 1;
   if (perDia >= 8) return 0.5;
   return 0;
 }
 
-// TAX APROV (% manutenção): acima de 19 → 0; 15-19 → 0,5; abaixo de 15 → 1
+// TAX APROV (% manutenção): acima de 19 → 0; >15 a 19 → 0,5; 15 ou menos → 1
 export function tierForPctManutencao(pct: number): SalaryTier {
-  if (pct < 15) return 1;
+  if (pct <= 15) return 1;
   if (pct <= 19) return 0.5;
   return 0;
 }
@@ -255,7 +255,7 @@ export function pctManutColors(pct: number) {
 }
 
 export function pctLabel(pct: number): string {
-  if (pct < 15) return 'EXCELENTE';
+  if (pct <= 15) return 'EXCELENTE';
   if (pct <= 19) return 'ATENÇÃO';
   return 'CRÍTICO';
 }
@@ -326,15 +326,38 @@ export function computeDesignMetrics(
   holidaySet: Set<string> = new Set(),
   atestados: Atestado[] = []
 ): DesignSummary {
+  // === DESIGNER: o filtro "Dia D" NÃO conta o dia em curso ===
+  // SÓ no "Dia D" (ciclo do dia 12 até hoje) o dia atual é excluído: no início
+  // do dia o designer pode ter feito 1 demanda só, e contar o dia em curso
+  // derrubaria injustamente o "demandas/dia". Em "Hoje" e em QUALQUER outro
+  // filtro que inclua o dia atual, o dia aparece normalmente.
+  // Detecção do "Dia D": começa no dia 12 e termina hoje — e não é um range de
+  // um único dia (senão "Hoje" no próprio dia 12 seria confundido com Dia D).
+  const agora = new Date();
+  const mesmoDia = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const ehDiaD = !!(
+    range?.start && range?.end &&
+    range.start.getDate() === 12 &&
+    mesmoDia(range.end, agora) &&
+    !mesmoDia(range.start, agora)
+  );
+  let effRange = range;
+  if (ehDiaD && range) {
+    const fimOntem = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate(), 0, 0, 0, 0);
+    fimOntem.setMilliseconds(-1); // ontem 23:59:59.999
+    effRange = { start: range.start, end: fimOntem };
+  }
+
   // `filtered` é o set COMPLETO do período (inclui inativos) — usado pelos
   // totais globais e modais. Inativos só são removidos do agrupamento por
   // designer abaixo, então não aparecem como cards mas continuam nas estatísticas.
-  const filtered = range ? filterEventosByDate(eventos, range) : eventos;
+  const filtered = effRange ? filterEventosByDate(eventos, effRange) : eventos;
 
-  const dias = diasNoPeriodo(range, filtered, holidaySet);
+  const dias = diasNoPeriodo(effRange, filtered, holidaySet);
 
   // Resolve as datas reais do período (pode ter sido inferido dos eventos)
-  const { start: rangeStart, end: rangeEnd } = resolveRangeBounds(range, filtered);
+  const { start: rangeStart, end: rangeEnd } = resolveRangeBounds(effRange, filtered);
 
   // Agrupa por designer — só os ATIVOS aparecem como cards.
   // Eventos com designer mesclado (ex: "Felipe Moraes, Jean Carlos Tigre")
@@ -356,25 +379,50 @@ export function computeDesignMetrics(
   }
 
   const designers: DesignerMetrics[] = [];
-  for (const [nome, evs] of byDesigner) {
+  for (const [nome, evsAll] of byDesigner) {
+    // Designer com início no meio do período (ex.: Camile, 01/06): conta só A
+    // PARTIR da entrada — eventos anteriores não contam e o denominador de dias
+    // começa na entrada (o "Dia D" dele fica mais curto). Continua aparecendo no
+    // filtro normal, só com o período interno encurtado. `inicio` só vale quando
+    // é DEPOIS do início do range (senão não muda nada).
+    const inicioRaw = getDesignerInicio(nome);
+    const inicio = inicioRaw && inicioRaw.getTime() > rangeStart.getTime() ? inicioRaw : null;
+    const evs = inicio
+      ? evsAll.filter((e) => eventoData(e).getTime() >= inicio.getTime())
+      : evsAll;
+    const diasBaseDesigner = inicio
+      ? Math.max(1, countWorkingDays(inicio, rangeEnd, holidaySet))
+      : dias;
+
     const feitos = evs.filter((e) => e.tipo_evento === 'feito');
     const manuts = evs.filter((e) => e.tipo_evento === 'manutencao');
     const manutsC = evs.filter((e) => e.tipo_evento === 'manutencao_c');
 
     const feitasUnicas = new Set(feitos.map(uniqueDemandaKey)).size;
-    const manutsAll = [...manuts, ...manutsC];
-    const manutencoesUnicas = new Set(manutsAll.map(uniqueDemandaKey)).size;
+    // Métrica de manutenção considera SÓ manutenção do cliente (`manutencao_c`,
+    // label "MANUT. C" no Monday). A manutenção do gestor (`manutencao`) ainda
+    // é carregada e fica disponível em `totalEventosManutencao` + `eventos`,
+    // mas não pesa no % nem no tier de bônus do designer.
+    const manutsConsideradas = manutsC;
+    const manutencoesUnicas = new Set(manutsConsideradas.map(uniqueDemandaKey)).size;
 
-    const pct = feitasUnicas > 0 ? (manutencoesUnicas / feitasUnicas) * 100 : 0;
+    // % manutenção: regra ATUAL (atualizada 27/05/2026) usa EVENTOS BRUTOS,
+    // não dedupe. Fórmula: eventos_manutencao_cliente / eventos_entrega × 100.
+    // Conceito: "pra cada N vezes que o designer clicou em 'Feito', o cliente
+    // pediu M ajustes" — mede esforço de retrabalho, não 'qualidade da
+    // primeira entrega'. Se uma demanda volta 3× pelo cliente, ela pesa 3
+    // no numerador (não 1 como era antes via deduplicação).
+    const pct = feitos.length > 0 ? (manutsC.length / feitos.length) * 100 : 0;
+
     // demandas/dia usa o total de ENTREGAS (cada "Feito" no Monday = 1 entrega).
     // Subtrai dias de atestado do designer dentro do período — pra não penalizar
     // quem teve dia de licença médica.
-    const diasAtestado = diasUteisAtestados(nome, atestados, rangeStart, rangeEnd, holidaySet);
-    const diasDesigner = Math.max(1, dias - diasAtestado);
+    const diasAtestado = diasUteisAtestados(nome, atestados, inicio ?? rangeStart, rangeEnd, holidaySet);
+    const diasDesigner = Math.max(1, diasBaseDesigner - diasAtestado);
     const perDia = feitos.length / diasDesigner;
     const tDem = tierForDemandasDia(perDia);
     // tier de manutenção só faz sentido se há entregas
-    const tMan = feitasUnicas > 0 ? tierForPctManutencao(pct) : 0;
+    const tMan = feitos.length > 0 ? tierForPctManutencao(pct) : 0;
 
     // Regra do bônus: SEMPRE VENCE O MENOR. Designer só recebe se BATER AS
     // DUAS metas. Se bater 1 salário em demandas mas zerar manutenção, ganha 0.
@@ -418,10 +466,14 @@ export function computeDesignMetrics(
   const allManutsC = filtered.filter((e) => e.tipo_evento === 'manutencao_c');
 
   const feitasUnicas = new Set(allFeitos.map(uniqueDemandaKey)).size;
-  const manutencoesUnicas = new Set(
-    [...allManuts, ...allManutsC].map(uniqueDemandaKey)
-  ).size;
-  const pctGeral = feitasUnicas > 0 ? (manutencoesUnicas / feitasUnicas) * 100 : 0;
+  // Idem da contagem por designer: % geral conta SÓ manutenção do cliente
+  // (`manutencao_c`). A do gestor continua disponível em `totalEventosManutencao`
+  // pra não perder o dado, mas não entra no % usado para o bônus/tier.
+  const manutencoesUnicas = new Set(allManutsC.map(uniqueDemandaKey)).size;
+  // % geral: fórmula EVENTOS / EVENTOS (consistente com pct por designer).
+  // Mede esforço total de retrabalho do time, não a taxa de aprovação de
+  // primeiras entregas.
+  const pctGeral = allFeitos.length > 0 ? (allManutsC.length / allFeitos.length) * 100 : 0;
 
   return {
     feitasUnicas,

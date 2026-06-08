@@ -15,8 +15,8 @@ const TIER_CONFIG: Record<SalaryTier, {
   barClass: string;
 }> = {
   1: {
-    src: '/image.png',
-    alt: 'Mandando muito bem',
+    src: '/programadores-acima-meta.jpg',
+    alt: 'Gabriel e Eduardo acima da meta',
     borderColor: 'rgba(34,197,94,0.5)',
     glowColor: 'rgba(34,197,94,0.35)',
     message: 'VOCÊ ESTÁ NO TOPO. MANTÉM O RITMO! 🔥',

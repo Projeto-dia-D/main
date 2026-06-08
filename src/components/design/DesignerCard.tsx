@@ -106,10 +106,11 @@ export function DesignerCard({ designer, onClickFeitas, onClickManutencoes }: Pr
             <RefreshCw size={11} /> Manutenções
           </div>
           <AnimatedNumber
-            value={designer.totalEventosManutencao + designer.totalEventosManutencaoC}
+            value={designer.totalEventosManutencaoC}
             className="font-display text-xl text-white"
           />
           <span className="text-[10px] text-burst-muted">{designer.manutencoesUnicas} demandas únicas</span>
+          <span className="text-[10px] text-burst-muted/60">{designer.totalEventosManutencao + designer.totalEventosManutencaoC} no total c/ gestor</span>
         </button>
       </div>
 

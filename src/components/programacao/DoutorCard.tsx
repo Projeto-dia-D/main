@@ -1,7 +1,7 @@
 import { LineChart, Line, ResponsiveContainer, Tooltip, YAxis } from 'recharts';
 import { Activity, Calendar, ArrowRightLeft, Circle, type LucideIcon } from 'lucide-react';
 import type { DoutorMetrics } from '../../lib/types';
-import { tierColor } from '../../lib/metrics';
+import { tierColor, formatBiaAtiva } from '../../lib/metrics';
 import { AnimatedNumber } from '../AnimatedNumber';
 
 interface Props {
@@ -109,6 +109,9 @@ export function DoutorCard({ doutor }: Props) {
       </div>
 
       <div className="border-t border-burst-border pt-3 space-y-1.5 text-xs text-burst-muted">
+        <div className="flex items-center gap-1.5">
+          <Activity size={12} /> Bia ativa há: <span className="text-white/80 ml-auto">{formatBiaAtiva(doutor.biaAtivaMs)}</span>
+        </div>
         <div className="flex items-center gap-1.5">
           <Calendar size={12} /> Último lead: <span className="text-white/80 ml-auto">{fmt(doutor.ultimoLead)}</span>
         </div>

@@ -16,6 +16,10 @@ import { CsesTable } from '../cs/CsesTable';
 import { PerfilPessoalCs } from '../cs/PerfilPessoalCs';
 import { ClientesTable } from '../gestor/ClientesTable';
 import { ClientesGridView } from '../gestor/ClientesGridView';
+import { ListasClientes } from '../gestor/ListasClientes';
+import { RankingPessoasCards } from '../gestor/RankingPessoasCards';
+import { brl, tierForCpt, tierLabelCpt } from '../../lib/gestorMetrics';
+import { useUserPhotos } from '../../hooks/useUserPhotos';
 import { CampanhasTable } from '../gestor/CampanhasTable';
 import { ClienteDrilldown } from '../gestor/ClienteDrilldown';
 import { LeadsTable } from '../programacao/LeadsTable';
@@ -23,7 +27,6 @@ import { TransferidosTable } from '../programacao/TransferidosTable';
 import { isClientChurned, nameMatchesScope } from '../../lib/monday';
 import { useUser, hasFullAccess } from '../../lib/userContext';
 import { ViewAsTab } from '../ViewAsTab';
-import { useUserPhotos } from '../../hooks/useUserPhotos';
 import { useNotifications } from '../../lib/notificationsContext';
 import { useEffect } from 'react';
 
@@ -56,6 +59,10 @@ export function CS() {
   const {
     clients: mondayClients,
     allClients: mondayAllClients,
+    // clientsAll é o universo TOTAL do main board (sem filtro de grupo/tipo).
+    // Usado pra pegar clientes vinculados que estão fora do filtro padrão
+    // (ex: Colnaghi — grupo "Plano normal", tipo "Normal").
+    clientsAll: mondayClientsAll,
     biaActiveIds,
     biaTimelineByClientId,
     biaFaseByClientId,
@@ -91,16 +98,20 @@ export function CS() {
     [leads, range]
   );
 
-  // Inclui clientes com vínculo manual mesmo se não estão com Bia ativa.
+  // Inclui clientes com vínculo Meta MESMO se não estão no filtro padrão do
+  // mondayClients (grupo "Plano à vista" + tipo "Normal + Bia Soft"). Usa
+  // mondayClientsAll (universo TOTAL) — antes era mondayAllClients (que já
+  // vem filtrado por grupo/tipo) e clientes de "Plano normal" como a Colnaghi
+  // sumiam mesmo tendo vínculo Meta salvo.
   const clientesParaMetricas = useMemo(() => {
-    if (mondayAllClients.length === 0) return mondayClients;
+    if (mondayClientsAll.length === 0) return mondayClients;
     const idsAtivos = new Set(mondayClients.map((c) => c.id));
     const idsComLink = new Set(links.map((l) => l.monday_client_id));
-    const extras = mondayAllClients.filter(
+    const extras = mondayClientsAll.filter(
       (c) => idsComLink.has(c.id) && !idsAtivos.has(c.id)
     );
     return extras.length === 0 ? mondayClients : [...mondayClients, ...extras];
-  }, [mondayClients, mondayAllClients, links]);
+  }, [mondayClients, mondayClientsAll, links]);
 
   const fullSummary = useMemo(
     () =>
@@ -314,6 +325,45 @@ export function CS() {
                 lastUpdate={lastUpdate}
                 onOpenClientes={() => setOpenModal('clientes')}
                 onOpenCses={() => setOpenModal('cses')}
+              />
+
+              {/* === RANKING COMPACTO DOS CSs (cards horizontais com foto)
+                  Estilo Apresentação — comparação rápida antes dos PainelMini.
+                  Ordenado por CPT crescente (melhores primeiro). */}
+              <RankingPessoasCards
+                titulo="Ranking dos CSs"
+                subtitulo={`${summary.cses.length} CS(s) ordenados por melhor CPT`}
+                pessoas={[...summary.cses]
+                  .sort((a, b) => (a.cpt ?? Infinity) - (b.cpt ?? Infinity))
+                  .map((c) => ({
+                    id: c.cs,
+                    nome: c.cs,
+                    photoUrl: lookupPhoto(c.cs),
+                    metricaPrincipal: c.cpt !== null ? brl(c.cpt) : '—',
+                    metricaLabel: 'CPT',
+                    tier: c.cpt !== null ? tierForCpt(c.cpt) : 0,
+                    tierLabel: tierLabelCpt(c.cpt !== null ? tierForCpt(c.cpt) : 0),
+                    onClick: () => setDrillAllClientesCs(c.cs),
+                  }))}
+              />
+
+              {/* === LISTAS AGREGADAS DE TODOS OS CLIENTES (Melhores/Piores/
+                  Menos transf/Menos leads + Tabela completa) — visível
+                  pra admin/super programador apenas. Universo: clientes
+                  de todos os CSs + os sem CS atribuído. */}
+              <ListasClientes
+                clients={[...summary.cses.flatMap((c) => c.clients), ...summary.clientesSemCs]}
+                onClickCliente={(cm) => {
+                  // Procura em todos os CSs pra resolver o nome do CS
+                  const csDoClient = summary.cses.find((c) =>
+                    c.clients.some((cl) => cl.client.id === cm.client.id),
+                  );
+                  setDrillClient({
+                    clientId: cm.client.id,
+                    csNome: csDoClient?.cs ?? '(sem CS)',
+                  });
+                }}
+                totalLabelSuffix="cliente(s) no time inteiro"
               />
 
               {summary.cses.length > 0 && (

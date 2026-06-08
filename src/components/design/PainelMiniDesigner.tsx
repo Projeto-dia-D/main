@@ -151,10 +151,11 @@ export function PainelMiniDesigner({
             <RefreshCw size={11} /> Manutenções
           </div>
           <AnimatedNumber
-            value={designer.totalEventosManutencao + designer.totalEventosManutencaoC}
+            value={designer.totalEventosManutencaoC}
             className="font-display text-base text-white"
           />
           <span className="text-[9px] text-burst-muted">{designer.manutencoesUnicas} únicas</span>
+          <span className="text-[9px] text-burst-muted/60">{designer.totalEventosManutencao + designer.totalEventosManutencaoC} c/ gestor</span>
         </ClickableStat>
       </div>
 
@@ -214,7 +215,7 @@ function ClientesDoDesigner({ designer }: { designer: DesignerMetrics }) {
       </div>
       <ul className="flex flex-col gap-1 max-h-56 overflow-y-auto scrollbar-thin pr-1">
         {rows.map((r) => {
-          const pctCls = r.pct < 15 ? 'text-green-400' : r.pct <= 19 ? 'text-burst-orange-bright' : 'text-red-400';
+          const pctCls = r.pct <= 15 ? 'text-green-400' : r.pct <= 19 ? 'text-burst-orange-bright' : 'text-red-400';
           return (
             <li
               key={r.nome}

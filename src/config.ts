@@ -66,6 +66,226 @@ export const config = {
 // Obs: 'andrei' ≠ 'André' (com acento) — não conflita com a conta Meta do André.
 export const GESTORES_EXCLUIDOS = ['roberta', 'andrei'];
 
+// ============================================================================
+// CUTOFFS MANUAIS DE CLIENTES
+// ============================================================================
+// Mapa { monday_client_id → data ISO } pra clientes que devem PARAR DE CONTAR
+// nas métricas a partir de uma data específica, SEM precisar marcar churn no
+// Monday. Útil quando o cliente está em manutenção/aviso prévio mas a equipe
+// quer congelar o spend e leads dele nas métricas.
+//
+// Comportamento (igual ao churn cutoff):
+//   - Leads com dataCadastro APÓS o cutoff são ignorados
+//   - Spend dos dias APÓS o cutoff é ignorado (via timeline)
+//   - Cliente vira `inactive=true` automaticamente
+//   - Histórico ANTES do cutoff continua valendo normalmente
+//
+// Pra adicionar: pega o `monday_client_id` (10+ dígitos) e a data ISO.
+export const CLIENT_CUTOFFS: Record<string, string> = {
+  // Elevare Odontologia (Ana Neri) — encerrou nas métricas em 27/05/2026.
+  // Histórico mantido, novos leads/spend NÃO entram.
+  '11093674024': '2026-05-27T00:00:00.000Z',
+  // Dr. Jarles Júnior — desconsiderado das métricas a partir de 01/06/2026.
+  '9893019300': '2026-06-01T00:00:00-03:00',
+};
+
+/** Retorna a data de cutoff manual do cliente, ou null se não há. */
+export function getClientCustomCutoff(mondayClientId: string): Date | null {
+  const iso = CLIENT_CUTOFFS[mondayClientId];
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// ============================================================================
+// OVERRIDE DE CS (reatribuição que o time fez na coluna "CS" people do Monday,
+// e NÃO na "CS do projeto" que o app lê — por isso esses ainda apareciam como
+// Yasmin). Pros clientes abaixo, força o CS atual pro novo responsável (nome
+// curto, igual às opções da coluna de status). Tira a Yasmin (que saiu).
+// Esta lista é a dos LINKADOS-ATIVOS (com lead no Dia D) que precisam de PISO
+// por data (reatribuição no meio do ciclo). Os DEMAIS clientes que estão como
+// Yasmin são resolvidos automaticamente em monday.ts lendo a coluna "CS"
+// (people) — ver resolveCsFromPeople/isCsOculto. Quando o time arrumar a "CS do
+// projeto" no Monday, é só remover daqui.
+//
+// `since` = data em que o cliente DE FATO passou pro novo CS (mudança real na
+// coluna "CS" people do Monday — confirmada via activity log: todas em
+// MAIO/2026, em duas levas 25/05 e 28/05, + Diego Rocha em 01/06). A mudança
+// de 2025 que aparecia no log era o novo CS entrando como SOMBRA, não o
+// handover. Antes dessa data o cliente ainda era da Yasmin → NÃO conta pro novo
+// CS (piso via getCsReassignFloor, na visão de CS). Como caem DENTRO do ciclo
+// do Dia D atual, o novo CS só pega a métrica a partir de ~25-28/05 (o começo
+// do ciclo, 12-24/05, era da Yasmin e some).
+export interface CsOverrideEntry { cs: string; since: string }
+export const CS_OVERRIDE: Record<string, CsOverrideEntry> = {
+  '7962135952':  { cs: 'Laura',  since: '2026-05-25T00:00:00-03:00' }, // OdontoSin (Aline/Pedro)
+  '9653474772':  { cs: 'Laura',  since: '2026-05-25T00:00:00-03:00' }, // Gabriela Ramos Brum
+  '9831704063':  { cs: 'Laura',  since: '2026-05-25T00:00:00-03:00' }, // Dra. Michelly Mussi
+  '9878881359':  { cs: 'Laura',  since: '2026-05-25T00:00:00-03:00' }, // Dra. Ethel Sfeir
+  '10058495139': { cs: 'Julia',  since: '2026-06-01T00:00:00-03:00' }, // Dr. Diego Rocha (mudou 01/06)
+  '10538365892': { cs: 'Lilian', since: '2026-05-28T00:00:00-03:00' }, // Dr. Rodrigo Rios
+  '10551118176': { cs: 'Lilian', since: '2026-05-28T00:00:00-03:00' }, // Dra. Ádila Maciel
+  '10660899597': { cs: 'Lilian', since: '2026-05-28T00:00:00-03:00' }, // Dr. Edmaro Alexandre
+  '10954127967': { cs: 'Laura',  since: '2026-05-25T00:00:00-03:00' }, // Dr. João Antônio
+  '11011478715': { cs: 'Laura',  since: '2026-05-25T00:00:00-03:00' }, // Dr. Alexandre Moreno
+  '11075526119': { cs: 'Lilian', since: '2026-05-28T00:00:00-03:00' }, // Clínica NA Odontologia (Nicole)
+  '11252440506': { cs: 'Lilian', since: '2026-05-28T00:00:00-03:00' }, // Oral Unic Lages
+  '11367420200': { cs: 'Laura',  since: '2026-05-25T00:00:00-03:00' }, // Dra. Mayara Ventura
+  '11407194012': { cs: 'Laura',  since: '2026-05-25T00:00:00-03:00' }, // Dr. Alexandre Dotto
+  '11533443746': { cs: 'Laura',  since: '2026-05-25T00:00:00-03:00' }, // Dr. Tiago Augusto
+  '18128625857': { cs: 'Laura',  since: '2026-05-25T00:00:00-03:00' }, // Dr. Rafael Oliveira - OrtoImplanT
+  '18157282918': { cs: 'Lilian', since: '2026-05-28T00:00:00-03:00' }, // VitaPrime Clínica Odontológica
+  '18233591362': { cs: 'Lilian', since: '2026-05-28T00:00:00-03:00' }, // Dra Jessica Barros
+  '18302733942': { cs: 'Lilian', since: '2026-05-28T00:00:00-03:00' }, // Dra Shawana Mayer
+  '10911960726': { cs: 'Lilian', since: '2026-05-28T00:00:00-03:00' }, // Dra. Júlia Nobre (linkada, inadimplente)
+  '18110636874': { cs: 'Laura',  since: '2026-05-25T00:00:00-03:00' }, // Barros Odontologia (linkada, inadimplente)
+};
+
+/** CS forçado pro cliente (override da coluna "CS do projeto"), ou null. */
+export function getCsOverride(mondayClientId: string): string | null {
+  return CS_OVERRIDE[mondayClientId]?.cs ?? null;
+}
+
+// ============================================================================
+// CS OCULTO (saiu da empresa, ex: Yasmin) — some de TODAS as visualizações.
+// ============================================================================
+// Não exclui métrica de ninguém: clientes que ainda estão marcados com um CS
+// oculto são resolvidos pro NOVO CS lendo a coluna "CS" (people) do Monday
+// (resolveCsFromPeople). Quem não tem novo CS (cliente morto/jurídico, sem lead
+// no Dia D) simplesmente fica sem CS — não vira card de "Yasmin".
+export const CS_OCULTOS = ['yasmin'];
+
+/** True se o nome do CS é de alguém que saiu (não deve aparecer em lugar nenhum). */
+export function isCsOculto(cs: string | null | undefined): boolean {
+  if (!cs) return false;
+  const n = cs.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  return CS_OCULTOS.some((h) => n.includes(h));
+}
+
+// Nome-completo (coluna "CS" people) → nome curto (coluna de status). Só os CSs
+// que receberam clientes da Yasmin. Fallback: primeiro nome capitalizado.
+const CS_NOME_CANONICO: Record<string, string> = {
+  'laura cordova de sa': 'Laura',
+  'lilian tavares': 'Lilian',
+  'julia branco': 'Julia',
+};
+
+/** Do texto da coluna "CS" people (ex: "Yasmin de Souza Xavier, Laura Cordova
+ *  de Sá"), retorna o nome curto do 1º CS que NÃO é oculto (o novo
+ *  responsável), ou null se só houver CS oculto/vazio. */
+export function resolveCsFromPeople(peopleText: string | null | undefined): string | null {
+  if (!peopleText) return null;
+  for (const nome of peopleText.split(',').map((p) => p.trim()).filter(Boolean)) {
+    if (isCsOculto(nome)) continue;
+    const norm = nome.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+    if (CS_NOME_CANONICO[norm]) return CS_NOME_CANONICO[norm];
+    const primeiro = nome.trim().split(/\s+/)[0];
+    return primeiro.charAt(0).toUpperCase() + primeiro.slice(1);
+  }
+  return null;
+}
+
+// ============================================================================
+// REATRIBUIÇÃO DE CS — CS que saiu da empresa (ex: Yasmin)
+// ============================================================================
+// Quando um CS sai e seus clientes são redistribuídos no Monday, o histórico
+// dele NÃO pode ser jogado no novo CS. Solução: pros clientes listados, as
+// MÉTRICAS DE CS só contam A PARTIR de `cutoff` — leads/spend anteriores somem
+// (não entram no novo CS).
+//
+// IMPORTANTE: afeta SOMENTE a atribuição de CS (aba CS + Apresentação). O
+// gestor de tráfego desses clientes mantém o histórico completo.
+//
+// Escopo: só os clientes ATIVOS no período que de fato foram reatribuídos —
+// detectados nos activity logs da coluna "CS do projeto" (color4) saindo de
+// "Yasmin". O novo CS vem automaticamente do valor atual do Monday.
+// (Ex-clientes da Yasmin churned/sem vínculo Meta não impactam as métricas.)
+export const CS_REATRIBUICAO_CUTOFF = '2026-06-01T00:00:00-03:00';
+
+export const CS_REATRIBUICAO_CLIENT_IDS: string[] = [
+  '10675453641', // TK Clinic — Yasmin → Paula (vínculo Meta ativo)
+  '7329127133',  // Dra Bárbara Iglesias — Yasmin → Laura (ativo; sem vínculo Meta ainda)
+];
+
+/** Data-piso de reatribuição de CS do cliente: na visão de CS, leads/spend
+ *  ANTES dela não contam. null se o cliente não foi reatribuído. */
+export function getCsReassignFloor(mondayClientId: string): Date | null {
+  // 1) Override de CS (Yasmin → novo CS): piso = data em que o cliente mudou
+  //    (cada cliente tem a sua, vinda do Monday).
+  const ov = CS_OVERRIDE[mondayClientId];
+  if (ov?.since) {
+    const d = new Date(ov.since);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  // 2) Reatribuição clássica (color4 já trocado no Monday): cutoff único.
+  if (CS_REATRIBUICAO_CLIENT_IDS.includes(mondayClientId)) {
+    const d = new Date(CS_REATRIBUICAO_CUTOFF);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  return null;
+}
+
+// ============================================================================
+// SPEND ZERADO ATÉ A DATA (por cliente)
+// ============================================================================
+// Pra clientes cujo GASTO histórico não deve contar (ex: conta Meta trocada,
+// valor errado, gasto de outra fase). O spend ANTES do cutoff é ignorado em
+// Gestor/CS/Apresentação; a partir do cutoff conta normal. NÃO afeta leads nem
+// transferências — só o investido e o CPT.
+export const CLIENT_SPEND_FLOORS: Record<string, string> = {
+  // Dra. Melissa Chacon — spend zerado; conta a partir de 01/06/2026.
+  '12016584809': '2026-06-01T00:00:00-03:00',
+};
+
+/** Data a partir da qual o spend do cliente passa a contar (gasto anterior é
+ *  ignorado), ou null se não há piso de spend pra esse cliente. */
+export function getClientSpendFloor(mondayClientId: string): Date | null {
+  const iso = CLIENT_SPEND_FLOORS[mondayClientId];
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// ============================================================================
+// CAMPANHAS META EXCLUÍDAS DAS MÉTRICAS
+// ============================================================================
+// Lista de campanhas que NÃO devem contar no spend/CPT/conversão do gestor/CS.
+// IMPORTANTE: a campanha NÃO é alterada no Meta — continua rodando normal lá.
+// O app só ignora ela quando agrega métricas.
+//
+// Match: (accountId === act_id) AND (campaign_name contém substring).
+// Use a substring mais distintiva possível pra evitar falso-positivo.
+//
+// Quando usar: campanha experimental, de teste, de curso/produto secundário,
+// ou qualquer campanha que distorce as métricas do cliente principal.
+export interface CampaignExclusion {
+  /** account_id (act_xxx) onde a campanha vive. */
+  accountId: string;
+  /** Substring case-insensitive que identifica a campanha. */
+  campaignNameContains: string;
+  /** Nota livre pra documentar quem/por quê. */
+  motivo?: string;
+}
+
+export const CAMPAIGN_EXCLUSIONS: CampaignExclusion[] = [
+  {
+    accountId: 'act_1351675795945538',
+    campaignNameContains: '[CURSO-IMPLANTE]',
+    motivo: 'Dr. Fabiano Miranzi — campanha de curso, não conta nas métricas',
+  },
+];
+
+/** Retorna true se a campanha está na lista de exclusões. */
+export function isCampaignExcluida(accountId: string, campaignName: string): boolean {
+  if (!accountId || !campaignName) return false;
+  const nameLower = campaignName.toLowerCase();
+  return CAMPAIGN_EXCLUSIONS.some(
+    (e) =>
+      e.accountId === accountId &&
+      nameLower.includes(e.campaignNameContains.toLowerCase()),
+  );
+}
+
 export function isGestorExcluido(nome: string | null | undefined): boolean {
   if (!nome) return false;
   const n = nome
@@ -83,6 +303,7 @@ export const DESIGNERS_ATIVOS = [
   'felipe moraes',
   'paulo henrique',
   'lais beisheim',
+  'camile de oliveira',
 ];
 
 export function isDesignerAtivo(nome: string | null | undefined): boolean {
@@ -103,6 +324,7 @@ export const DESIGNER_LABELS: Record<string, string> = {
   'felipe moraes': 'Felipe Moraes',
   'paulo henrique': 'Paulo Henrique Pires Da Silva',
   'lais beisheim': 'Lais Beisheim',
+  'camile de oliveira': 'Camile',
 };
 
 // Foto "modo herói" — aparece com efeito de fogo verde quando o designer
@@ -119,6 +341,28 @@ export function getDesignerFoto(nome: string | null | undefined): string | null 
   const n = nome.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
   for (const [frag, path] of Object.entries(DESIGNER_FOTOS)) {
     if (n.includes(frag)) return path;
+  }
+  return null;
+}
+
+// Designer que entrou no meio do tempo: a métrica dele só conta A PARTIR desta
+// data — eventos anteriores não contam e o denominador de "demandas/dia" começa
+// aqui (o "Dia D" dele fica mais curto). Ele continua aparecendo normalmente nos
+// filtros (Dia D / Hoje / etc.), só com o período interno encurtado.
+export const DESIGNER_INICIO: Record<string, string> = {
+  // Camile entrou em 01/06/2026. (chave 'camile' casa com o label curto "Camile")
+  'camile': '2026-06-01T00:00:00-03:00',
+};
+
+/** Data de início do designer (quando entrou no meio do período), ou null. */
+export function getDesignerInicio(nome: string | null | undefined): Date | null {
+  if (!nome) return null;
+  const n = nome.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  for (const [frag, iso] of Object.entries(DESIGNER_INICIO)) {
+    if (n.includes(frag)) {
+      const d = new Date(iso);
+      if (!Number.isNaN(d.getTime())) return d;
+    }
   }
   return null;
 }

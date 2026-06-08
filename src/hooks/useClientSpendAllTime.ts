@@ -57,13 +57,26 @@ function normalizeAccountId(id: string): string {
   return trimmed.startsWith('act_') ? trimmed : `act_${trimmed}`;
 }
 
+/** Data ISO (YYYY-MM-DD) de N meses atrás a partir de hoje. */
+function monthsAgoIso(months: number): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() - months);
+  return d.toISOString().slice(0, 10);
+}
+
 async function fetchInsightsWithToken(
   accountId: string,
   token: string
 ): Promise<{ rows: Array<{ spend: string; date_start: string; campaign_name: string }>; error: string | null }> {
   const acct = normalizeAccountId(accountId);
-  const since = '2020-01-01';
   const until = new Date().toISOString().slice(0, 10);
+  // A Meta limita insights a no máximo 37 meses atrás:
+  //   "(#3018) The start date of the time range cannot be beyond 37 months
+  //    from the current date"
+  // Antes era '2020-01-01' fixo, que passou a estourar #3018 (HTTP 400) assim
+  // que a janela de 37 meses ultrapassou jan/2020 (~2023). Usamos 36 meses de
+  // margem — é o "all-time" possível dentro do limite da API.
+  const since = monthsAgoIso(36);
   const range = encodeURIComponent(JSON.stringify({ since, until }));
 
   const allRows: Array<{ spend: string; date_start: string; campaign_name: string }> = [];

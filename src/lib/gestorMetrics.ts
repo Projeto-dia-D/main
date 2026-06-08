@@ -9,13 +9,15 @@ import {
   isChatIncompleto,
   isNomeChatIncompleto,
   isDesclassificado,
+  activeMsInRange,
 } from './metrics';
-import { isGestorExcluido } from '../config';
+import { isGestorExcluido, getClientCustomCutoff, isCampaignExcluida, getClientSpendFloor } from '../config';
 import {
   getClientChurnCutoff,
   isClientChurned,
   buildActiveWindows,
   fracaoAtivaNoDia,
+  parseDataEntrada,
 } from './monday';
 
 export interface ClientMetrics {
@@ -41,10 +43,21 @@ export interface ClientMetrics {
   inactive: boolean;
   /** Spend REAL antes do ajuste por timeline de Manutenção (transparência). */
   spendBruto: number;
+  /** Total REAL investido no range, antes de QUALQUER corte (piso de spend,
+   *  manutenção, CRC). = o valor "total" pra exibir ao lado do "contando".
+   *  Igual a spendBruto quando não há piso de spend. */
+  spendBrutoTotal?: number;
   /** Spend EXCLUÍDO porque caiu em períodos de Manutenção. */
   spendExcluido: number;
+  /** Spend EXCLUIDO porque o lead foi interceptado pela CRC do cliente.
+   *  Calculado como `spend × (chatsInterrompidos / leadsTotais)`. Aplicado
+   *  universalmente — todo gestor/CS recebe o ajuste. */
+  spendExcluidoCrc: number;
   /** Períodos em que a Bia esteve fora de I.A ativa dentro do range (debug/UI). */
   periodosManutencao: Array<{ inicio: string; fim: string; status: string | null }>;
+  /** Tempo (ms) com a Bia ATIVA desde a entrada do cliente (exclui manutenção).
+   *  Formate com formatBiaAtiva(). null se não há entrada/timeline. */
+  biaAtivaMs?: number | null;
 }
 
 export interface GestorMetrics {
@@ -55,6 +68,27 @@ export interface GestorMetrics {
   cpt: number | null;
   tier: SalaryTier;
   clients: ClientMetrics[];
+}
+
+/**
+ * Acha o "cliente destaque" de um gestor/CS — o que tem o MENOR CPT
+ * (custo por transferência), exigindo um volume mínimo de transferências
+ * pra qualificar.
+ *
+ * Critérios:
+ *  - cliente ativo
+ *  - transferências > 10 (filtra ruído de baixa amostra)
+ *  - CPT calculável
+ *
+ * Ordenação: CPT crescente (menor custo ganha).
+ * Retorna null se nenhum cliente qualificar.
+ */
+export function findDestaqueClient(clients: ClientMetrics[]): ClientMetrics | null {
+  const candidatos = clients.filter(
+    (c) => !c.inactive && c.transferencias > 10 && c.cpt !== null
+  );
+  if (candidatos.length === 0) return null;
+  return [...candidatos].sort((a, b) => (a.cpt ?? Infinity) - (b.cpt ?? Infinity))[0];
 }
 
 export interface OrfaoTransferencia {
@@ -218,6 +252,10 @@ export function computeGestorMetrics(opts: {
   biaFaseByClientId?: Map<string, string>;
   /** Range de datas em análise. Se omitido, não há cutoff por timeline. */
   dateRange?: { start: Date | null; end: Date | null };
+  /** Piso por cliente pra reatribuição de CS (CS que saiu). Quando retorna uma
+   *  data pro mondayClientId, leads/spend ANTES dela não contam. Passado SÓ na
+   *  visão de CS (computeCsMetrics) — o gestor mantém o histórico completo. */
+  csReassignFloor?: (mondayClientId: string) => Date | null;
 }): GestorSummary {
   const {
     insights,
@@ -231,7 +269,11 @@ export function computeGestorMetrics(opts: {
   } = opts;
 
   // Helper: cliente está ativo na Bia? Match exato por monday_client_id.
+  // Também checa CLIENT_CUTOFFS (config.ts) — se há cutoff manual e a data
+  // já passou, cliente vira inativo mesmo se a Bia ainda mostrar "ativa".
   function isClienteAtivo(cl: MondayClient): boolean {
+    const customCutoff = getClientCustomCutoff(cl.id);
+    if (customCutoff && customCutoff.getTime() <= Date.now()) return false;
     if (!biaActiveIds || biaActiveIds.size === 0) return true;
     return biaActiveIds.has(cl.id);
   }
@@ -278,8 +320,12 @@ export function computeGestorMetrics(opts: {
     }
   }
 
-  // 3) Campanhas Fim/Venda
-  const fimVenda = insights.filter((i) => isFimVenda(i.campaign_name));
+  // 3) Campanhas Fim/Venda — filtra Fim/Venda E remove exclusões manuais
+  //    (CAMPAIGN_EXCLUSIONS em config.ts). Campanha excluída continua no Meta,
+  //    só não conta no spend/CPT/conversão do cliente.
+  const fimVenda = insights
+    .filter((i) => isFimVenda(i.campaign_name))
+    .filter((i) => !isCampaignExcluida(i.accountId, i.campaign_name));
 
   // 4) Atribui cada campanha Fim/Venda a um cliente.
   //    Prioridade: link explícito por Ad Account ID > match por substring no nome.
@@ -364,13 +410,34 @@ export function computeGestorMetrics(opts: {
       }
     }
 
-    // Aplica corte de churn: leads APÓS a data de corte não contam.
+    // Aplica corte: leads APÓS a data de corte não contam.
+    // O cutoff EFETIVO é o MAIS ANTIGO entre:
+    //   - churnCutoff (vem do status "Churn" no Monday)
+    //   - customCutoff (lista CLIENT_CUTOFFS em config.ts — pra encerrar
+    //     cliente sem precisar churnar no Monday)
     const churnCutoff = getClientChurnCutoff(cl);
+    const customCutoff = getClientCustomCutoff(cl.id);
     const churned = isClientChurned(cl);
-    if (churnCutoff) {
-      const cutoffMs = churnCutoff.getTime();
+    const effectiveCutoff: Date | null = [churnCutoff, customCutoff]
+      .filter((d): d is Date => d !== null)
+      .sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
+    if (effectiveCutoff) {
+      const cutoffMs = effectiveCutoff.getTime();
       allLeadsDoCliente = allLeadsDoCliente.filter(
         (l) => new Date(l.dataCadastro).getTime() <= cutoffMs
+      );
+    }
+
+    // === REATRIBUIÇÃO DE CS (piso por data) ===
+    // Pros clientes reatribuídos de um CS que saiu (ex: Yasmin), as métricas de
+    // CS só contam A PARTIR do corte — leads/spend anteriores NÃO entram (não
+    // são jogados no novo CS). Só aplica quando csReassignFloor é passado (visão
+    // de CS); o gestor desses clientes mantém o histórico completo.
+    const reassignFloor = opts.csReassignFloor?.(cl.id) ?? null;
+    if (reassignFloor) {
+      const floorMs = reassignFloor.getTime();
+      allLeadsDoCliente = allLeadsDoCliente.filter(
+        (l) => new Date(l.dataCadastro).getTime() >= floorMs
       );
     }
 
@@ -387,7 +454,36 @@ export function computeGestorMetrics(opts: {
     // Esses chats NAO contam em mensagensIniciadas/transferencias/CPT — so
     // sinalizam volume de atendimento manual.
     const chatsInterrompidos = allLeadsDoCliente.filter(isInterrompido).length;
-    const campaigns = campaignsByClient.get(cl.name) ?? [];
+    let campaigns = campaignsByClient.get(cl.name) ?? [];
+    // Total REAL investido no range, ANTES de qualquer piso de spend — usado
+    // pra mostrar "total vs contando" na tela (transparência).
+    const spendBrutoTotal = campaigns.reduce((s, c) => s + c.spend, 0);
+    if (reassignFloor) {
+      // Spend diário (time_increment=1): mantém só os dias A PARTIR do corte.
+      // Linha sem `date` (modo agregado) é descartada quando há piso, pra não
+      // vazar gasto pré-corte pro novo CS.
+      const f = reassignFloor;
+      const floorStr = `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}-${String(f.getDate()).padStart(2, '0')}`;
+      campaigns = campaigns.filter((c) => !!c.date && c.date >= floorStr);
+    }
+    // Spend "zerado até a data" por cliente (CLIENT_SPEND_FLOORS): descarta o
+    // gasto diário ANTES do corte (ex: Melissa Chacon — conta a partir de 01/06).
+    // Aplicado SEMPRE (Gestor + CS + Apresentação). Não mexe em leads/transferências.
+    const spendFloor = getClientSpendFloor(cl.id);
+    if (spendFloor) {
+      const fs = spendFloor;
+      const floorStrSpend = `${fs.getFullYear()}-${String(fs.getMonth() + 1).padStart(2, '0')}-${String(fs.getDate()).padStart(2, '0')}`;
+      campaigns = campaigns.filter((c) => !!c.date && c.date >= floorStrSpend);
+    }
+    // TETO por corte (churn ou CLIENT_CUTOFFS): o SPEND também não conta a partir
+    // do corte — dropa o gasto diário dos dias >= cutoff, pra o cliente sumir do
+    // investido/CPT (e não só dos leads). spendBrutoTotal (acima) mantém o valor
+    // cheio pra "total vs contando". ceStr em UTC pra casar datas '...Z' e '...-03:00'.
+    if (effectiveCutoff) {
+      const ce = effectiveCutoff;
+      const ceStr = `${ce.getUTCFullYear()}-${String(ce.getUTCMonth() + 1).padStart(2, '0')}-${String(ce.getUTCDate()).padStart(2, '0')}`;
+      campaigns = campaigns.filter((c) => !c.date || c.date < ceStr);
+    }
     const spendBruto = campaigns.reduce((s, c) => s + c.spend, 0);
 
     // === AJUSTE POR TIMELINE DE MANUTENÇÃO ===
@@ -441,10 +537,45 @@ export function computeGestorMetrics(opts: {
       }
     }
 
+    // === AJUSTE POR CRC INTERCEPTADO (regra de 3) ===
+    // Aplicado UNIVERSAL — todo gestor + CS recebe o ajuste.
+    //
+    // Quando a CRC do cliente intercepta o atendimento manualmente, a Bia
+    // não tem chance de qualificar ou transferir o lead. Cobrar o spend
+    // inteiro em cima das poucas transferências que sobraram pra Bia eh
+    // injusto — quem causou a interrupção foi a CRC, não o gestor/CS.
+    //
+    // Fórmula: spend × (leadsAvaliaveis / leadsTotais)
+    //   onde leadsTotais = avaliaveis + interrompidos
+    //
+    // Exemplo: 50 leads, 48 interrompidos pela CRC, 2 avaliaveis (1 transf).
+    //   proporcao = 2 / 50 = 0.04
+    //   spend = 500 × 0.04 = 20
+    //   CPT = 20 / 1 = 20 (em vez de 500)
+    let spendExcluidoCrc = 0;
+    const leadsTotais = mensagensIniciadas + chatsInterrompidos;
+    if (leadsTotais > 0 && chatsInterrompidos > 0) {
+      const proporcao = mensagensIniciadas / leadsTotais;
+      const spendAjustado = spend * proporcao;
+      spendExcluidoCrc = Number((spend - spendAjustado).toFixed(2));
+      spend = Number(spendAjustado.toFixed(2));
+    }
+
     const cpt = transferencias > 0 ? spend / transferencias : null;
     const metaMatchVia = campaigns.length > 0
       ? (metaMatchByClient.get(cl.name) ?? null)
       : null;
+
+    // === DIAS COM BIA ATIVA (desde a entrada do cliente, exclui manutenção) ===
+    // Até AGORA (independe do range). Em horas se < 1 dia.
+    let biaAtivaMs: number | null = null;
+    {
+      const tlBia = opts.biaTimelineByClientId?.get(cl.id);
+      const faseBia = opts.biaFaseByClientId?.get(cl.id) ?? null;
+      const entradaBia = parseDataEntrada(cl.dataEntrada);
+      const sinceBia = entradaBia ?? (tlBia && tlBia.length > 0 ? new Date(tlBia[0].ts) : null);
+      if (sinceBia) biaAtivaMs = activeMsInRange(tlBia, faseBia, sinceBia, new Date());
+    }
 
     return {
       client: cl,
@@ -460,11 +591,14 @@ export function computeGestorMetrics(opts: {
       leads: leadsDoCliente,
       allLeads: allLeadsDoCliente,
       churned,
-      churnCutoff,
+      churnCutoff: effectiveCutoff,
       inactive: !isClienteAtivo(cl),
       spendBruto: Number(spendBruto.toFixed(2)),
+      spendBrutoTotal: Number(spendBrutoTotal.toFixed(2)),
       spendExcluido,
+      spendExcluidoCrc,
       periodosManutencao,
+      biaAtivaMs,
     };
   });
 

@@ -9,28 +9,34 @@ interface Props {
   allClients: MondayClient[];
   /** Vínculos existentes — pra filtrar quem já tem vínculo. */
   links: ClientMetaLink[];
+  /** IDs dos clientes presentes no board Bia Soft (qualquer fase). Só esses
+   *  rodam Bia → fazem sentido pro banner. Sem isso, vão aparecer clientes
+   *  Monday que nem usam IA, gerando ruído. */
+  biaAllIds: Set<string>;
   /** Click "Vincular" abre o modal de vinculações já filtrando pelo cliente. */
   onAbrirVinculacoes?: () => void;
 }
 
 /**
- * Banner que lista doutores ATIVOS na Burst (não churn, não pausa, não jurídico)
- * que ainda não têm conta Meta vinculada. Aparece quando há ≥1 caso.
+ * Banner que lista doutores que ROdam Bia (estão no board Bia Soft) E são
+ * elegíveis (não churn, não pausa, não jurídico) E ainda não têm conta Meta
+ * vinculada. Aparece quando há ≥1 caso.
  *
  * Objetivo: dar visibilidade pro time vincular esses clientes — campanhas
  * deles existem no Meta mas a app não sabe atribuir spend, então caem como
  * "campanhas órfãs".
  */
-export function DoutoresSemVinculoMeta({ allClients, links, onAbrirVinculacoes }: Props) {
+export function DoutoresSemVinculoMeta({ allClients, links, biaAllIds, onAbrirVinculacoes }: Props) {
   const [expanded, setExpanded] = useState(false);
 
   const semVinculo = useMemo(() => {
     const linkedIds = new Set(links.map((l) => l.monday_client_id));
     return allClients
-      .filter((c) => isClientElegivelMeta(c))
-      .filter((c) => !linkedIds.has(c.id))
+      .filter((c) => biaAllIds.has(c.id))        // só quem está no Bia Soft
+      .filter((c) => isClientElegivelMeta(c))    // não churn / pausa / juridico
+      .filter((c) => !linkedIds.has(c.id))       // sem vínculo Meta ainda
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [allClients, links]);
+  }, [allClients, links, biaAllIds]);
 
   if (semVinculo.length === 0) return null;
 

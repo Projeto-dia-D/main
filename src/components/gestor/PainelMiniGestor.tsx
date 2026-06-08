@@ -120,7 +120,7 @@ export function PainelMiniGestor({
           <span>
             Ver todos os <span className="text-white font-semibold">{gestor.clients.length}</span> clientes
             {ativosCount !== gestor.clients.length && (
-              <span className="text-burst-muted/70"> ({ativosCount} ativos)</span>
+              <span className="text-burst-muted/70"> ({ativosCount} ativos no Dia D)</span>
             )}
           </span>
           <ChevronRight size={11} />

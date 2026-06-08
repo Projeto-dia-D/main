@@ -4,8 +4,9 @@ import type {
   MetricsSummary,
   SalaryTier,
 } from './types';
-import type { MondayClient } from './monday';
-import { getClientChurnCutoff } from './monday';
+import type { MondayClient, FaseTransition } from './monday';
+import { getClientChurnCutoff, isFaseAtivaPublic, parseDataEntrada } from './monday';
+import { getClientCustomCutoff } from '../config';
 
 const TRANSFERENCIA_PATTERNS = [
   'agendar consulta',
@@ -30,6 +31,17 @@ const INTERROMPIDO_PATTERNS = [
   'interrompido',
 ];
 
+// Motivos que CONTEM "agendamento" mas NAO sao transferencia nova.
+// Casam ANTES dos TRANSFERENCIA_PATTERNS — se bater aqui, isTransferido()
+// retorna false direto.
+//
+// Caso classico: "agendamento de manutencao" — paciente JA convertido
+// agendando retorno pra manutencao. Nao e venda nova, nao deveria entrar
+// no funil de conversao do doutor/gestor/cs.
+const TRANSFERENCIA_EXCLUSION_PATTERNS = [
+  'manutencao',     // cobre manutenção/manutençao/MANUTENÇÃO (normalize tira acento)
+];
+
 // Doutores cujos leads são armazenados mas NÃO contam em transferências/CPT.
 // Toda lead presente OU futura com nomeDoutor contendo um destes termos
 // (case-insensitive, sem acento) é classificada como "Chat incompleto" e
@@ -40,7 +52,8 @@ const DOUTORES_CHAT_INCOMPLETO = [
   'vitaprime',           // VitaPrime Clínica Odontológica
   'vita prime',          // variação com espaço
   'vitta prime',         // grafia antiga com 2 T (mantém compat com dados existentes)
-  'mayara ventura',      // aparece em Chats Incompletos, não conta em Gestor/CS
+  // 'mayara ventura' — REMOVIDA em 27/05/2026: passa a contar nas métricas
+  //   (retroativo + futuro). Antes era excluída como "chat incompleto".
   'clinica artis',       // Clínica Artis (Carolina Moura) — chats incompletos, fora da métrica
 ];
 
@@ -53,6 +66,7 @@ const DOUTORES_DESCONSIDERADOS = [
   'jadson lucas',
   'simone justo',
   'idgm',                // IDGM - Cursos (Patrick e Gabriel Machado) — desconsiderado em todos os setores
+  'luxx sorriso',        // Luxx Sorriso — removido de Gestor/Programação/CS (a pedido)
 ];
 
 // Doutores escondidos APENAS da aba Programação (continuam em Gestor/CS).
@@ -73,6 +87,9 @@ function normalize(text: string | null | undefined): string {
 
 export function isTransferido(lead: RelatorioBias): boolean {
   const haystack = normalize(lead.motivoTransferencia);
+  // Exclui motivos de manutenção primeiro — sao agendamentos de retorno,
+  // nao conversao nova.
+  if (TRANSFERENCIA_EXCLUSION_PATTERNS.some((p) => haystack.includes(p))) return false;
   return TRANSFERENCIA_PATTERNS.some((p) => haystack.includes(p));
 }
 
@@ -218,6 +235,107 @@ function daysBetween(a: Date, b: Date): number {
   return Math.floor((a.getTime() - b.getTime()) / (1000 * 60 * 60 * 24));
 }
 
+/**
+ * Conta os DIAS em que a Bia esteve ATIVA no intervalo [since, until].
+ *
+ * Usa a timeline de transicoes de fase do board Bia Soft pra montar
+ * "segmentos" de tempo onde a fase era ativa. Soma as duracoes desses
+ * segmentos dentro do intervalo.
+ *
+ * Pra "dias sem transferencia", since = data da ultima transferencia.
+ * Se a Bia ficou em manutencao 20 de 30 dias desde a ultima transferencia,
+ * o resultado e 10 (e nao 30 — nao penaliza o doutor pelos 20 dias mortos).
+ *
+ * Edge cases:
+ *  - Timeline vazia + faseAtual ativa: assume sempre ativa = retorna calendar days
+ *  - Timeline vazia + faseAtual NAO ativa: retorna 0
+ *  - until < since: retorna 0
+ */
+const MS_PER_HORA = 1000 * 60 * 60;
+const MS_PER_DIA = 1000 * 60 * 60 * 24;
+
+export function activeMsInRange(
+  timeline: FaseTransition[] | undefined,
+  faseAtual: string | null | undefined,
+  since: Date,
+  until: Date
+): number {
+  if (until.getTime() <= since.getTime()) return 0;
+
+  // Sem timeline: usa so a fase atual (assume manteve por todo o periodo)
+  if (!timeline || timeline.length === 0) {
+    return isFaseAtivaPublic(faseAtual) ? until.getTime() - since.getTime() : 0;
+  }
+
+  // Ordena timeline por ts ascending (paranoia — geralmente ja vem ordenada)
+  const sorted = [...timeline].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+
+  // Constroi segmentos [start, end, isActive] cobrindo [since, until].
+  // Antes da primeira transicao: usa transitions[0].prev como fase
+  // Entre transicao i e i+1: usa transitions[i].next
+  // Depois da ultima: usa transitions[last].next (que deveria casar com faseAtual)
+  let activeMs = 0;
+  const sinceTs = since.getTime();
+  const untilTs = until.getTime();
+
+  // Fase antes da primeira transicao
+  let currentFase: string | null | undefined = sorted[0].prev;
+  let segStart = sinceTs;
+
+  for (const t of sorted) {
+    const tTs = new Date(t.ts).getTime();
+    if (tTs <= sinceTs) {
+      // Transicao acontece antes do nosso intervalo — soh atualiza fase
+      currentFase = t.next;
+      continue;
+    }
+    if (tTs >= untilTs) {
+      // Transicao acontece depois do nosso intervalo — fecha ultimo segmento
+      if (isFaseAtivaPublic(currentFase)) {
+        activeMs += untilTs - segStart;
+      }
+      segStart = untilTs;
+      currentFase = t.next;
+      break;
+    }
+    // Transicao DENTRO do intervalo — fecha segmento atual e abre proximo
+    if (isFaseAtivaPublic(currentFase)) {
+      activeMs += tTs - segStart;
+    }
+    segStart = tTs;
+    currentFase = t.next;
+  }
+
+  // Fecha segmento final ate `until` (se nao foi fechado no loop)
+  if (segStart < untilTs && isFaseAtivaPublic(currentFase)) {
+    activeMs += untilTs - segStart;
+  }
+
+  return activeMs;
+}
+
+/** Dias (inteiros) com a Bia ATIVA no intervalo. Wrapper de activeMsInRange. */
+export function activeDaysInRange(
+  timeline: FaseTransition[] | undefined,
+  faseAtual: string | null | undefined,
+  since: Date,
+  until: Date
+): number {
+  return Math.floor(activeMsInRange(timeline, faseAtual, since, until) / MS_PER_DIA);
+}
+
+/** Formata o tempo com a Bia ATIVA: "N dias", ou "N horas" se < 1 dia.
+ *  null/undefined/negativo → "—". */
+export function formatBiaAtiva(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || ms < 0) return '—';
+  if (ms < MS_PER_DIA) {
+    const h = Math.floor(ms / MS_PER_HORA);
+    return `${h} ${h === 1 ? 'hora' : 'horas'}`;
+  }
+  const d = Math.floor(ms / MS_PER_DIA);
+  return `${d} ${d === 1 ? 'dia' : 'dias'}`;
+}
+
 function formatDateKey(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -276,7 +394,14 @@ function buildChurnCutoffMap(
   const map = new Map<string, Date>();
   if (!clients) return map;
   for (const c of clients) {
-    const cutoff = getClientChurnCutoff(c);
+    // Corte = o MAIS ANTIGO entre churn (status do Monday) e custom (lista
+    // CLIENT_CUTOFFS no config). Sem incluir o custom aqui, o corte manual só
+    // valia em Gestor/CS — agora também desconsidera na Programação.
+    const churn = getClientChurnCutoff(c);
+    const custom = getClientCustomCutoff(c.id);
+    const cutoff = [churn, custom]
+      .filter((d): d is Date => d !== null)
+      .sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
     if (!cutoff) continue;
     // chave: nome do cliente normalizado (que tende a casar com nomeDoutor)
     const key = normalize(c.name);
@@ -298,6 +423,53 @@ function findCutoffForDoutor(
   for (const [key, cutoff] of cutoffMap) {
     if (target.includes(key) || key.includes(target)) return cutoff;
   }
+  // Fallback "loose": remove parênteses e colapsa espaços, pra casar variações
+  // de pontuação — ex: "Elevare Odontologia - Ana Neri" (cliente) vs
+  // "Elevare Odontologia (Ana Neri)" (nomeDoutor).
+  const loose = (s: string) => s.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim();
+  const lt = loose(target);
+  if (lt) {
+    for (const [key, cutoff] of cutoffMap) {
+      const lk = loose(key);
+      if (lk && (lt.includes(lk) || lk.includes(lt))) return cutoff;
+    }
+  }
+  return null;
+}
+
+/** Normaliza nome pra comparacao (sem acento, lowercase, trim, sem prefixos). */
+function normalizeNomeDoutor(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/^(dr\.?|dra\.?|drs\.?|dras\.?)\s+/i, '')
+    .trim();
+}
+
+/** Constroi indice nome normalizado → MondayClient pra match O(1). */
+function buildClientIndex(clients: MondayClient[]): Map<string, MondayClient> {
+  const m = new Map<string, MondayClient>();
+  for (const c of clients) {
+    const key = normalizeNomeDoutor(c.name);
+    if (key) m.set(key, c);
+  }
+  return m;
+}
+
+/** Acha o MondayClient correspondente ao nome do doutor. Match exato primeiro,
+ *  substring fallback. Retorna null se nao achar. */
+function findClientForDoutor(
+  doutorName: string,
+  clientIndex: Map<string, MondayClient>
+): MondayClient | null {
+  const key = normalizeNomeDoutor(doutorName);
+  if (!key) return null;
+  if (clientIndex.has(key)) return clientIndex.get(key)!;
+  // Substring fallback — pega o primeiro client cujo nome normalizado bate
+  for (const [clientKey, client] of clientIndex) {
+    if (clientKey.includes(key) || key.includes(clientKey)) return client;
+  }
   return null;
 }
 
@@ -305,7 +477,9 @@ export function computeMetrics(
   leads: RelatorioBias[],
   range?: DateRange,
   instanceMap?: Map<string, string>,
-  clients?: MondayClient[]
+  clients?: MondayClient[],
+  biaTimelineByClientId?: Map<string, FaseTransition[]>,
+  biaFaseByClientId?: Map<string, string>
 ): MetricsSummary {
   const now = new Date();
   const evolucaoEnd = range?.end ?? now;
@@ -357,6 +531,10 @@ export function computeMetrics(
     byDoutor.set(resolved, arr);
   }
 
+  // Indice nome → MondayClient pra resolver timeline da Bia por doutor.
+  // Soh constroi se realmente vamos usar (clients fornecidos).
+  const clientIndex = clients && clients.length > 0 ? buildClientIndex(clients) : null;
+
   const doutores: DoutorMetrics[] = [];
   for (const [nome, dleads] of byDoutor) {
     const totalLeads = dleads.length;
@@ -379,9 +557,41 @@ export function computeMetrics(
       }
     }
 
-    const diasSemTransferencia = ultimaTransferencia
-      ? daysBetween(now, new Date(ultimaTransferencia))
-      : 9999;
+    // === DIAS SEM TRANSFERENCIA ===
+    // Em vez de contar DIAS DE CALENDARIO desde a ultima transferencia, conta
+    // apenas DIAS COM BIA ATIVA. Se a Bia ficou desligada/em manutencao no
+    // periodo, esses dias NAO contam (nao penaliza o doutor por algo que
+    // nao depende dele).
+    //
+    // Fallback: sem timeline/client → comportamento antigo (calendar days).
+    let diasSemTransferencia: number;
+    if (!ultimaTransferencia) {
+      diasSemTransferencia = 9999;
+    } else {
+      const since = new Date(ultimaTransferencia);
+      const client = clientIndex ? findClientForDoutor(nome, clientIndex) : null;
+      const timeline = client && biaTimelineByClientId ? biaTimelineByClientId.get(client.id) : undefined;
+      const faseAtual = client && biaFaseByClientId ? biaFaseByClientId.get(client.id) : null;
+      if (client && (biaTimelineByClientId || biaFaseByClientId)) {
+        diasSemTransferencia = activeDaysInRange(timeline, faseAtual, since, now);
+      } else {
+        // Sem dados de timeline/fase: fallback pro comportamento antigo
+        diasSemTransferencia = daysBetween(now, since);
+      }
+    }
+
+    // === DIAS COM BIA ATIVA (desde a entrada do cliente, exclui manutenção) ===
+    // Há quanto tempo o cliente está com a Bia ATIVA. Vai até AGORA (independe
+    // do range). Em horas se < 1 dia (cliente recém-ativado).
+    let biaAtivaMs: number | null = null;
+    const clientBia = clientIndex ? findClientForDoutor(nome, clientIndex) : null;
+    if (clientBia) {
+      const tlBia = biaTimelineByClientId?.get(clientBia.id);
+      const faseBia = biaFaseByClientId?.get(clientBia.id) ?? null;
+      const entradaBia = parseDataEntrada(clientBia.dataEntrada);
+      const sinceBia = entradaBia ?? (tlBia && tlBia.length > 0 ? new Date(tlBia[0].ts) : null);
+      if (sinceBia) biaAtivaMs = activeMsInRange(tlBia, faseBia, sinceBia, now);
+    }
 
     let status: DoutorMetrics['status'] = 'ATIVO';
     if (!ultimaTransferencia || diasSemTransferencia >= 5) {
@@ -397,6 +607,7 @@ export function computeMetrics(
       ultimoLead,
       ultimaTransferencia,
       diasSemTransferencia,
+      biaAtivaMs,
       status,
       evolucao: buildEvolucao(dleads, evolucaoEnd),
       leads: dleads,

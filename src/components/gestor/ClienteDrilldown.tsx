@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { MessageCircle, ArrowDownRight, DollarSign } from 'lucide-react';
 import { brl, type ClientMetrics } from '../../lib/gestorMetrics';
-import { isTransferido, isInterrompido, isChatIncompleto, isDesclassificado } from '../../lib/metrics';
+import { isTransferido, isInterrompido, isChatIncompleto, isDesclassificado, formatBiaAtiva } from '../../lib/metrics';
 import { AnimatedNumber } from '../AnimatedNumber';
 import { LeadsTable } from '../programacao/LeadsTable';
 import { TransferidosTable } from '../programacao/TransferidosTable';
@@ -52,10 +52,15 @@ export function ClienteDrilldown({ cm }: Props) {
         />
         <StatTab
           icon={<DollarSign size={13} />}
-          label="Investido"
+          label="Investido (contando)"
           valueText={brl(cm.spend)}
           active={tab === 'campanhas'}
           onClick={() => setTab('campanhas')}
+          subText={
+            cm.spendBrutoTotal != null && cm.spendBrutoTotal > cm.spend + 0.01
+              ? `Total: ${brl(cm.spendBrutoTotal)}`
+              : undefined
+          }
         />
       </div>
 
@@ -66,6 +71,10 @@ export function ClienteDrilldown({ cm }: Props) {
             <span className="text-burst-muted/70 mx-2">•</span>
           </span>
         )}
+        <span className="text-white">
+          Bia ativa há: <span className="text-burst-orange-bright">{formatBiaAtiva(cm.biaAtivaMs)}</span>
+          <span className="text-burst-muted/70 mx-2">•</span>
+        </span>
         {cm.doutorMatch && (
           <span>
             Matched a doutor: <span className="text-white">{cm.doutorMatch}</span>

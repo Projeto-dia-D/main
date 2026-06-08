@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { identifyTeamMember } from '../lib/teamPhones';
 
 /**
  * Hook que busca dados do grupo WhatsApp vinculado a um cliente Monday.
@@ -183,8 +184,27 @@ export function useWhatsappGroup(clientName: string | null, clientId: string | n
             .limit(1),
         ]);
         if (!activeRef.current) return;
-        setMembers((mRes.data ?? []) as WhatsappMember[]);
-        setEvents((eRes.data ?? []) as WhatsappEvent[]);
+
+        // Override membros/eventos pelo phone book hardcoded da equipe.
+        // O sync Python pode ter errado role/nome por name-matching fraco —
+        // aqui a gente corrige em runtime baseado em telefone (estavel).
+        // Quem nao bate com a equipe fica como o sync deixou (geralmente cliente).
+        const rawMembers = (mRes.data ?? []) as WhatsappMember[];
+        const members: WhatsappMember[] = rawMembers.map((m) => {
+          const t = identifyTeamMember(m.phone);
+          if (!t) return m;
+          return { ...m, inferred_role: t.role, inferred_name: t.name };
+        });
+
+        const rawEvents = (eRes.data ?? []) as WhatsappEvent[];
+        const events: WhatsappEvent[] = rawEvents.map((e) => {
+          const t = identifyTeamMember(e.triggered_by_phone);
+          if (!t) return e;
+          return { ...e, triggered_by_role: t.role };
+        });
+
+        setMembers(members);
+        setEvents(events);
         const scores = sRes.data ?? [];
         setLatestScore(scores.length > 0 ? (scores[0] as WhatsappScore) : null);
         setError(null);

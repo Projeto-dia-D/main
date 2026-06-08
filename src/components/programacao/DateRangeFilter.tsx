@@ -26,12 +26,19 @@ function ontemRange(): DateRange {
   return { start, end };
 }
 
-// Período Dia D: a partir do dia 12 do mês corrente até hoje.
+// Período Dia D: ciclo de faturamento que começa no dia 12 de cada mês, até hoje.
 // (mês 0-indexado em Date: maio = 4, mas usamos getMonth() pra acompanhar o mês atual)
+//
+// IMPORTANTE: se hoje ainda NÃO chegou no dia 12, o ciclo corrente começou no
+// dia 12 do mês ANTERIOR. Sem esse ajuste, nos dias 1–11 o `start` (dia 12 do
+// mês atual) cai NO FUTURO em relação ao `end` (hoje) → range invertido → leads
+// e spend vêm vazios em todas as abas (e a Meta retorna 400 com since no futuro).
+//
 // Exportada pra que outras abas (Gestor / CS) possam usar como filtro inicial.
 export function diaDRange(): DateRange {
   const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 12, 0, 0, 0, 0);
+  const monthOffset = now.getDate() < 12 ? -1 : 0;
+  const start = new Date(now.getFullYear(), now.getMonth() + monthOffset, 12, 0, 0, 0, 0);
   const end = new Date();
   end.setHours(23, 59, 59, 999);
   return { start, end };
