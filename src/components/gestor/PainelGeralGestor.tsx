@@ -108,6 +108,10 @@ export function PainelGeralGestor({
             onClick={onOpenCampanhas}
             accent
           />
+          <div className="flex items-center justify-between text-[11px] text-burst-muted -mt-2 px-1">
+            <span>Meta <span className="text-white/85 font-semibold">{brl(summary.totalSpendMeta)}</span></span>
+            <span>Google <span className="text-white/85 font-semibold">{brl(summary.totalSpendGoogle)}</span></span>
+          </div>
           <StatCard
             icon={ArrowDownRight}
             label="Transferências"

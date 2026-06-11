@@ -11,7 +11,7 @@ import {
   isDesclassificado,
   activeMsInRange,
 } from './metrics';
-import { isGestorExcluido, getClientCustomCutoff, isCampaignExcluida, getClientSpendFloor } from '../config';
+import { isGestorExcluido, getClientCustomCutoff, isCampaignExcluida, getClientSpendFloor, getGoogleAdsLink } from '../config';
 import {
   getClientChurnCutoff,
   isClientChurned,
@@ -25,7 +25,11 @@ export interface ClientMetrics {
   doutorMatch: string | null;          // nomeDoutor casado em relatorio_bias
   matchVia: 'token' | 'nome' | null;   // como o vínculo foi feito
   metaMatchVia: 'account' | 'nome' | null; // como o spend foi atribuído
-  spend: number;                        // investimento Meta (Fim/Venda) atribuído
+  spend: number;                        // investimento TOTAL (Meta + Google) atribuído, já ajustado
+  /** Parcela do `spend` vinda do Meta Ads (mesmos ajustes/cortes). */
+  spendMeta: number;
+  /** Parcela do `spend` vinda do Google Ads (mesmos ajustes/cortes). */
+  spendGoogle: number;
   transferencias: number;               // transferências válidas no período
   mensagensIniciadas: number;           // total de leads ATIVOS (excluindo interrompidos/incompletos/desclassificados)
   chatsInterrompidos: number;           // leads com motivo "chat interrompido" = CRC do cliente pegou o atendimento manualmente. Nao conta nas metricas mas e util pra mostrar volume de atendimento manual.
@@ -63,11 +67,30 @@ export interface ClientMetrics {
 export interface GestorMetrics {
   gestor: string;
   totalSpend: number;
+  /** Breakdown do totalSpend por origem (Meta Ads vs Google Ads). */
+  totalSpendMeta: number;
+  totalSpendGoogle: number;
   totalTransferencias: number;
   totalMensagens: number;               // soma das mensagensIniciadas dos clientes
   cpt: number | null;
   tier: SalaryTier;
   clients: ClientMetrics[];
+}
+
+/** Linha de gasto diário do Google Ads (vinda da tabela google_ads_spend). */
+export interface GoogleSpendRow {
+  accountId: string;
+  accountName: string;
+  /** YYYY-MM-DD */
+  date?: string;
+  spend: number;
+}
+
+/** Conta Google Ads com gasto que não casou com nenhum cliente Monday. */
+export interface GoogleOrfao {
+  accountId: string;
+  accountName: string;
+  spend: number;
 }
 
 /**
@@ -101,10 +124,15 @@ export interface OrfaoTransferencia {
 
 export interface GestorSummary {
   totalSpend: number;
+  /** Breakdown do totalSpend por origem (Meta Ads vs Google Ads). */
+  totalSpendMeta: number;
+  totalSpendGoogle: number;
   totalTransferencias: number;
   cptGeral: number | null;
   tier: SalaryTier;
   gestores: GestorMetrics[];
+  /** Contas Google Ads com gasto no período que não casaram com cliente. */
+  googleOrfaos: GoogleOrfao[];
   clientsFora: MondayClient[]; // clientes sem gestor mapeado
   campaignsOrfas: CampaignInsight[]; // campanhas Fim/Venda sem cliente casado
   // Doutores que aparecem no Supabase com transferências mas nenhum cliente
@@ -223,6 +251,64 @@ function findDoutorMatch(clientName: string, doutoresUniq: string[]): string | n
 }
 
 // Tenta achar o cliente cujo nome aparece no nome da campanha
+/**
+ * Casa o NOME de uma conta Google Ads com um cliente Monday.
+ * Mais permissivo que findClientForCampaign: limpa prefixos de conta
+ * ("CA-01", colchetes), testa contains nos DOIS sentidos e também a versão
+ * sem espaços (ex: "VITA PRIME" ↔ "VitaPrime Clínica Odontológica").
+ * Exige que o lado mais curto tenha ≥5 chars pra evitar falso positivo.
+ */
+function matchGoogleAccountToClient(
+  accountName: string,
+  clientsNorm: { name: string; norm: string }[]
+): string | null {
+  const cleaned = accountName
+    .replace(/\[[^\]]*\]/g, ' ')          // [Clinisales] etc.
+    .replace(/\bca[\s-]*0*\d+\b/gi, ' ')  // CA-01, CA 02…
+    .replace(/\bmcc\b/gi, ' ');
+  // Remove pontuação ("Dra." ≠ "Dra" quebrava o match por token)
+  const depunct = (s: string) => s.replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+  const norm = depunct(normalize(cleaned));
+  if (!norm) return null;
+  const flat = norm.replace(/\s+/g, '');
+
+  // Palavras genéricas que não identificam o cliente (não contam como token).
+  const STOP = new Set([
+    'dr', 'dra', 'doutor', 'doutora', 'clinica', 'odontologia', 'odonto',
+    'odontologica', 'odontologico', 'estetica', 'dental', 'consultorio',
+    'sorriso', 'implantes', 'lentes', 'facetas', 'resina', 'ceramica', 'em', 'de', 'do', 'da', 'e',
+  ]);
+  const tokensOf = (s: string) => s.split(' ').filter((t) => t.length > 1 && !STOP.has(t));
+  const accTokens = tokensOf(norm);
+
+  let best: { name: string; score: number } | null = null;
+  for (const c of clientsNorm) {
+    const cNorm = depunct(c.norm);
+    const cFlat = cNorm.replace(/\s+/g, '');
+    // Estratégia 1: contains nos dois sentidos (com e sem espaços)
+    const hitContains =
+      norm.includes(cNorm) || cNorm.includes(norm) ||
+      flat.includes(cFlat) || cFlat.includes(flat);
+    // Estratégia 2: subset de tokens significativos — TODOS os tokens do lado
+    // mais curto presentes no mais longo (ex: "dr marcelo wayama" ⊂
+    // "dr marcelo odontologia wayama").
+    let hitTokens = false;
+    if (!hitContains) {
+      const cliTokens = tokensOf(cNorm);
+      const [menor, maior] = accTokens.length <= cliTokens.length
+        ? [accTokens, cliTokens]
+        : [cliTokens, accTokens];
+      hitTokens = menor.length >= 1 && menor.every((t) => maior.includes(t));
+    }
+    if (!hitContains && !hitTokens) continue;
+    const score = Math.min(cFlat.length, flat.length);
+    if (score >= 5 && (!best || score > best.score)) {
+      best = { name: c.name, score };
+    }
+  }
+  return best?.name ?? null;
+}
+
 function findClientForCampaign(
   campaignName: string,
   clientsNorm: { name: string; norm: string }[]
@@ -256,6 +342,10 @@ export function computeGestorMetrics(opts: {
    *  data pro mondayClientId, leads/spend ANTES dela não contam. Passado SÓ na
    *  visão de CS (computeCsMetrics) — o gestor mantém o histórico completo. */
   csReassignFloor?: (mondayClientId: string) => Date | null;
+  /** Gasto diário do Google Ads por conta (tabela google_ads_spend, já filtrado
+   *  pelo range). Injetado como pseudo-campanha do cliente casado — herda
+   *  TODOS os ajustes do spend Meta (pisos, cortes, Manutenção, CRC). */
+  googleSpend?: GoogleSpendRow[];
 }): GestorSummary {
   const {
     insights,
@@ -358,6 +448,62 @@ export function computeGestorMetrics(opts: {
       campaignsOrfas.push(camp);
     }
   }
+
+  // 4b) GOOGLE ADS — injeta o gasto diário por conta como pseudo-campanha do
+  // cliente casado. Entra DEPOIS do filtro Fim/Venda (Google não usa essa
+  // nomenclatura) e ANTES de toda a matemática per-cliente — assim herda
+  // AUTOMATICAMENTE pisos de spend, cortes (churn/custom), reatribuição de
+  // CS, exclusão por Manutenção e o ajuste de CRC, igual ao spend Meta.
+  //
+  // REGRA: Google só conta pra cliente COM BIA (presente no board Bia Soft) —
+  // igual ao Meta. A timeline de Fase zera automaticamente os períodos em que
+  // a Bia não estava em I.A ativa (mesma fração diária do Meta). Conta de
+  // cliente SEM Bia (ex: DenteMar) vira órfã — aparece no diagnóstico, não
+  // soma pra nenhum gestor/CS.
+  // Identificação: accountId prefixado com 'google:' (usado na partição
+  // spendMeta × spendGoogle lá embaixo).
+  const clientByName = new Map<string, MondayClient>();
+  for (const c of clients) clientByName.set(c.name, c);
+  const temBia = (id: string) =>
+    (biaActiveIds?.has(id) ?? false) ||
+    (biaFaseByClientId?.has(id) ?? false) ||
+    (biaTimelineByClientId?.has(id) ?? false);
+  const googleOrfaosMap = new Map<string, GoogleOrfao>();
+  if (opts.googleSpend && opts.googleSpend.length > 0) {
+    // Universo de match: SÓ clientes com Bia.
+    const clientsNormBia = clientsNorm.filter((c) => {
+      const cli = clientByName.get(c.name);
+      return cli ? temBia(cli.id) : false;
+    });
+    for (const g of opts.googleSpend) {
+      if (!g.spend) continue;
+      // 1º: vínculo manual (config GOOGLE_ADS_LINKS) > 2º: match por nome.
+      // Vínculo manual também respeita a regra da Bia.
+      const linkedId = getGoogleAdsLink(g.accountId);
+      const linkedClient = linkedId ? clientById.get(linkedId) ?? null : null;
+      const ownerName = linkedClient && temBia(linkedClient.id)
+        ? linkedClient.name
+        : matchGoogleAccountToClient(g.accountName, clientsNormBia);
+      if (!ownerName) {
+        const prev = googleOrfaosMap.get(g.accountId);
+        if (prev) prev.spend += g.spend;
+        else googleOrfaosMap.set(g.accountId, { accountId: g.accountId, accountName: g.accountName, spend: g.spend });
+        continue;
+      }
+      const arr = campaignsByClient.get(ownerName) ?? [];
+      arr.push({
+        campaign_id: `gads:${g.accountId}`,
+        campaign_name: `[Google Ads] ${g.accountName}`,
+        spend: g.spend,
+        gestor: (clientByName.get(ownerName)?.gestor ?? 'Google') as CampaignInsight['gestor'],
+        accountId: `google:${g.accountId}`,
+        accountName: g.accountName,
+        date: g.date,
+      });
+      campaignsByClient.set(ownerName, arr);
+    }
+  }
+  const isGoogleCamp = (c: CampaignInsight) => c.accountId.startsWith('google:');
 
   // 5) Constrói ClientMetrics — vínculo Supabase: token uazapi > nome
   const clientMetrics: ClientMetrics[] = clients.map((cl) => {
@@ -489,25 +635,33 @@ export function computeGestorMetrics(opts: {
     // === AJUSTE POR TIMELINE DE MANUTENÇÃO ===
     // Se temos timeline + insights diários (date), excluímos a fração de
     // cada dia em que a Bia estava fora de I.A ativa.
+    // `spendGooglePart` acompanha cada etapa do ajuste — é a fatia do spend
+    // final que veio do Google Ads (pseudo-campanhas 'google:').
     const windows = getActiveWindowsForClient(cl.id);
     let spend = spendBruto;
+    let spendGooglePart = campaigns.filter(isGoogleCamp).reduce((s, c) => s + c.spend, 0);
     let spendExcluido = 0;
     const periodosManutencao: Array<{ inicio: string; fim: string; status: string | null }> = [];
     if (windows && windows.length >= 0) {
       // Reagrupa campanhas por dia
       let ajustado = 0;
+      let ajustadoGoogle = 0;
       const dailyHasDate = campaigns.some((c) => c.date);
       if (dailyHasDate) {
         for (const c of campaigns) {
+          let parcela: number;
           if (c.date) {
             const frac = fracaoAtivaNoDia(c.date, windows);
-            ajustado += c.spend * frac;
+            parcela = c.spend * frac;
           } else {
             // sem date (modo agregado) — mantém spend cheio (fallback)
-            ajustado += c.spend;
+            parcela = c.spend;
           }
+          ajustado += parcela;
+          if (isGoogleCamp(c)) ajustadoGoogle += parcela;
         }
         spend = Number(ajustado.toFixed(2));
+        spendGooglePart = ajustadoGoogle;
         spendExcluido = Number((spendBruto - spend).toFixed(2));
       } else {
         // Sem data nos insights — não há como aplicar cutoff por dia.
@@ -559,7 +713,13 @@ export function computeGestorMetrics(opts: {
       const spendAjustado = spend * proporcao;
       spendExcluidoCrc = Number((spend - spendAjustado).toFixed(2));
       spend = Number(spendAjustado.toFixed(2));
+      // A fatia Google recebe o MESMO fator (regra de 3 aplica proporcional)
+      spendGooglePart = spendGooglePart * proporcao;
     }
+
+    // Partição final Meta × Google (soma sempre = spend)
+    const spendGoogle = Number(Math.min(spendGooglePart, spend).toFixed(2));
+    const spendMeta = Number((spend - spendGoogle).toFixed(2));
 
     const cpt = transferencias > 0 ? spend / transferencias : null;
     const metaMatchVia = campaigns.length > 0
@@ -583,6 +743,8 @@ export function computeGestorMetrics(opts: {
       matchVia,
       metaMatchVia,
       spend,
+      spendMeta,
+      spendGoogle,
       transferencias,
       mensagensIniciadas,
       chatsInterrompidos,
@@ -628,12 +790,16 @@ export function computeGestorMetrics(opts: {
     // Não filtramos por ele aqui, porque um cliente atualmente em Manutenção
     // pode ter sido ativo parte do período e essa parte deve contar.
     const totalSpend = cms.reduce((s, c) => s + c.spend, 0);
+    const totalSpendMeta = cms.reduce((s, c) => s + c.spendMeta, 0);
+    const totalSpendGoogle = cms.reduce((s, c) => s + c.spendGoogle, 0);
     const totalTransf = cms.reduce((s, c) => s + c.transferencias, 0);
     const totalMensagens = cms.reduce((s, c) => s + c.mensagensIniciadas, 0);
     const cpt = totalTransf > 0 ? totalSpend / totalTransf : null;
     gestores.push({
       gestor,
       totalSpend: Number(totalSpend.toFixed(2)),
+      totalSpendMeta: Number(totalSpendMeta.toFixed(2)),
+      totalSpendGoogle: Number(totalSpendGoogle.toFixed(2)),
       totalTransferencias: totalTransf,
       totalMensagens,
       cpt: cpt === null ? null : Number(cpt.toFixed(2)),
@@ -715,14 +881,29 @@ export function computeGestorMetrics(opts: {
     .sort((a, b) => b.transferencias - a.transferencias || b.totalLeads - a.totalLeads);
   const totalOrfaosTransferencias = orfaos.reduce((s, o) => s + o.transferencias, 0);
 
+  const totalSpendMeta = gestores.reduce((s, g) => s + g.totalSpendMeta, 0);
+  const totalSpendGoogle = gestores.reduce((s, g) => s + g.totalSpendGoogle, 0);
+  const googleOrfaos = Array.from(googleOrfaosMap.values())
+    .map((o) => ({ ...o, spend: Number(o.spend.toFixed(2)) }))
+    .sort((a, b) => b.spend - a.spend);
+  if (googleOrfaos.length > 0) {
+    console.warn(
+      `[gestorMetrics] ${googleOrfaos.length} conta(s) Google Ads com gasto sem cliente casado:`,
+      googleOrfaos.map((o) => `${o.accountName} (${o.accountId}): R$ ${o.spend.toFixed(2)}`).join(' | ')
+    );
+  }
+
   return {
     totalSpend: Number(totalSpend.toFixed(2)),
+    totalSpendMeta: Number(totalSpendMeta.toFixed(2)),
+    totalSpendGoogle: Number(totalSpendGoogle.toFixed(2)),
     totalTransferencias,
     cptGeral,
     tier: tierForCpt(cptGeral),
     gestores,
     clientsFora,
     campaignsOrfas,
+    googleOrfaos,
     orfaos,
     totalOrfaosTransferencias,
   };

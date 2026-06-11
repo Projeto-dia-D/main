@@ -49,7 +49,12 @@ export function CsesTable({ cses }: Props) {
                   <td className="px-3 py-2 text-right text-white/90 font-mono">{c.clients.length}</td>
                   <td className="px-3 py-2 text-right text-white/90 font-mono">{c.totalMensagens}</td>
                   <td className="px-3 py-2 text-right text-burst-orange-bright font-mono font-semibold">{c.totalTransferencias}</td>
-                  <td className="px-3 py-2 text-right text-white/90 font-mono whitespace-nowrap">{brl(c.totalSpend)}</td>
+                  <td className="px-3 py-2 text-right text-white/90 font-mono whitespace-nowrap">
+                    {brl(c.totalSpend)}
+                    <div className="text-[10px] text-burst-muted font-sans">
+                      Meta {brl(c.totalSpendMeta)} · Google {brl(c.totalSpendGoogle)}
+                    </div>
+                  </td>
                   <td className={`px-3 py-2 text-right font-display ${colors.text}`}>
                     {c.cpt === null ? '—' : brl(c.cpt)}
                   </td>

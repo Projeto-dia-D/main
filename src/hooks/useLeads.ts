@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase, TABLE_NAME } from '../lib/supabase';
 import type { RelatorioBias } from '../lib/types';
-import { assertConfig } from '../config';
+import { assertConfig, getTokenDoutorOverride } from '../config';
 import { isPhoneBlocked } from '../lib/blockedPhones';
 import { readCacheWithMeta, writeCache } from '../lib/cache';
 
@@ -92,7 +92,11 @@ export function useLeads(): UseLeadsResult {
           if (isPhoneBlocked(r.telefone)) {
             blockedIds.push(r.id);
           } else {
-            cleanRows.push(r);
+            // Token é a verdade: corrige nomeDoutor de instância renomeada
+            // errada (TOKEN_DOUTOR_OVERRIDES) — vale pra leads futuros que
+            // continuem chegando com o nome errado.
+            const ov = getTokenDoutorOverride(r.token);
+            cleanRows.push(ov && r.nomeDoutor !== ov ? { ...r, nomeDoutor: ov } : r);
           }
         }
         if (blockedIds.length > 0) {

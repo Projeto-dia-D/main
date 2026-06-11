@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { AlertTriangle, Users, Link2, Database } from 'lucide-react';
 import { useLeads } from '../../hooks/useLeads';
 import { useMetaSpend } from '../../hooks/useMetaSpend';
+import { useGoogleAdsSpend } from '../../hooks/useGoogleAdsSpend';
 import { useMondayClients } from '../../hooks/useMondayClients';
 import { useMetaLinks } from '../../hooks/useMetaLinks';
 import { useDoutorLinks } from '../../hooks/useDoutorLinks';
@@ -118,6 +119,9 @@ export function GestorTrafego() {
   const { insights, loading: metaLoading, errors: metaErrors, lastUpdate } =
     useMetaSpend(range, linksParaMeta);
 
+  // Google Ads: gasto diário do espelho no Supabase (sync agendado)
+  const { googleSpend } = useGoogleAdsSpend(range);
+
   const filteredLeads = useMemo(
     () => filterByDateRange(leads, range),
     [leads, range]
@@ -153,6 +157,7 @@ export function GestorTrafego() {
         biaTimelineByClientId,
         biaFaseByClientId,
         dateRange: range,
+        googleSpend,
       }),
     [
       clientesParaMetricas,
@@ -164,6 +169,7 @@ export function GestorTrafego() {
       biaTimelineByClientId,
       biaFaseByClientId,
       range,
+      googleSpend,
     ]
   );
 
@@ -174,6 +180,8 @@ export function GestorTrafego() {
     if (hasFullAccess(user) && viewAsGestor) {
       const filteredGestores = fullSummary.gestores.filter((g) => g.gestor === viewAsGestor);
       const totalSpend = filteredGestores.reduce((s, g) => s + g.totalSpend, 0);
+      const totalSpendMeta = filteredGestores.reduce((s, g) => s + g.totalSpendMeta, 0);
+      const totalSpendGoogle = filteredGestores.reduce((s, g) => s + g.totalSpendGoogle, 0);
       const totalTransferencias = filteredGestores.reduce((s, g) => s + g.totalTransferencias, 0);
       const totalMensagens = filteredGestores.reduce((s, g) => s + g.totalMensagens, 0);
       const cptGeral = totalTransferencias > 0
@@ -183,6 +191,8 @@ export function GestorTrafego() {
         ...fullSummary,
         gestores: filteredGestores,
         totalSpend: Number(totalSpend.toFixed(2)),
+        totalSpendMeta: Number(totalSpendMeta.toFixed(2)),
+        totalSpendGoogle: Number(totalSpendGoogle.toFixed(2)),
         totalTransferencias,
         totalMensagens,
         cptGeral,
@@ -197,6 +207,8 @@ export function GestorTrafego() {
         nameMatchesScope(user.scope!, g.gestor)
       );
       const totalSpend = filteredGestores.reduce((s, g) => s + g.totalSpend, 0);
+      const totalSpendMeta = filteredGestores.reduce((s, g) => s + g.totalSpendMeta, 0);
+      const totalSpendGoogle = filteredGestores.reduce((s, g) => s + g.totalSpendGoogle, 0);
       const totalTransferencias = filteredGestores.reduce((s, g) => s + g.totalTransferencias, 0);
       const totalMensagens = filteredGestores.reduce((s, g) => s + g.totalMensagens, 0);
       const cptGeral = totalTransferencias > 0
@@ -206,6 +218,8 @@ export function GestorTrafego() {
         ...fullSummary,
         gestores: filteredGestores,
         totalSpend: Number(totalSpend.toFixed(2)),
+        totalSpendMeta: Number(totalSpendMeta.toFixed(2)),
+        totalSpendGoogle: Number(totalSpendGoogle.toFixed(2)),
         totalTransferencias,
         totalMensagens,
         cptGeral,
@@ -225,6 +239,8 @@ export function GestorTrafego() {
         matchVia: null,
         metaMatchVia: null,
         spend: 0,
+        spendMeta: 0,
+        spendGoogle: 0,
         transferencias: 0,
         mensagensIniciadas: 0,
         chatsInterrompidos: 0,
@@ -495,6 +511,9 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
                     metricaLabel: 'CPT',
                     tier: g.cpt !== null ? tierForCpt(g.cpt) : 0,
                     tierLabel: tierLabelCpt(g.cpt !== null ? tierForCpt(g.cpt) : 0),
+                    spendTotal: g.totalSpend,
+                    spendMeta: g.totalSpendMeta,
+                    spendGoogle: g.totalSpendGoogle,
                     onClick: () => setDrillAllClientesGestor(g.gestor),
                   }))}
               />

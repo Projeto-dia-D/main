@@ -25,7 +25,7 @@ const env = Object.fromEntries(
 const CLIENT_ID = env.VITE_ID_GOOGLE;
 const CLIENT_SECRET = env.VITE_CHAVE_API_GOOGLE;
 const REFRESH = env.GOOGLE_ADS_REFRESH_TOKEN;
-const DEV_TOKEN = env.GOOGLE_ADS_DEVELOPER_TOKEN;
+const DEV_TOKEN = env.GOOGLE_ADS_DEVELOPER_TOKEN || env.VITE_MCC_TOKEN;
 const LOGIN_CID = (env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || '').replace(/\D/g, '');
 const API = 'https://googleads.googleapis.com/v23';
 
@@ -33,7 +33,7 @@ for (const [k, v] of Object.entries({
   VITE_ID_GOOGLE: CLIENT_ID,
   VITE_CHAVE_API_GOOGLE: CLIENT_SECRET,
   GOOGLE_ADS_REFRESH_TOKEN: REFRESH,
-  GOOGLE_ADS_DEVELOPER_TOKEN: DEV_TOKEN,
+  'GOOGLE_ADS_DEVELOPER_TOKEN (ou VITE_MCC_TOKEN)': DEV_TOKEN,
 })) {
   if (!v) { console.error('❌ Falta no .env: ' + k); process.exit(1); }
 }

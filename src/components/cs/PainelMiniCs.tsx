@@ -91,10 +91,14 @@ export function PainelMiniCs({
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-2 mb-3">
+      <div className="grid grid-cols-3 gap-2 mb-1.5">
         <MiniStat icon={<DollarSign size={11} />} label="Investido" value={brl(cs.totalSpend)} accent onClick={onClickSpend} />
         <MiniStatNum icon={<ArrowDownRight size={11} />} label="Transf." value={cs.totalTransferencias} accent onClick={onClickTransferencias} />
         <MiniStatNum icon={<MessageCircle size={11} />} label="Mensagens" value={cs.totalMensagens} onClick={onClickMensagens} />
+      </div>
+      <div className="flex items-center justify-between text-[10px] text-burst-muted mb-3 px-0.5">
+        <span>Meta <span className="text-white/85 font-semibold">{brl(cs.totalSpendMeta)}</span></span>
+        <span>Google <span className="text-white/85 font-semibold">{brl(cs.totalSpendGoogle)}</span></span>
       </div>
 
       {(melhores.length > 0 || piores.length > 0) && (

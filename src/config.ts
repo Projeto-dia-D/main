@@ -247,6 +247,46 @@ export function getClientSpendFloor(mondayClientId: string): Date | null {
 }
 
 // ============================================================================
+// GOOGLE ADS — vínculo manual conta → cliente Monday
+// ============================================================================
+// O matching automático é por NOME (conta Google × cliente Monday). Quando o
+// nome não casa (aparece em "googleOrfaos" no console / diagnóstico), adicione
+// aqui: '<customer_id sem traços>': '<monday_client_id>'.
+export const GOOGLE_ADS_LINKS: Record<string, string> = {
+  // ex.: '5890334900': '11093674024',
+};
+
+/** monday_client_id vinculado manualmente à conta Google Ads, ou null. */
+export function getGoogleAdsLink(googleAccountId: string): string | null {
+  return GOOGLE_ADS_LINKS[googleAccountId] ?? null;
+}
+
+// ============================================================================
+// OVERRIDE DE DOUTOR POR TOKEN (uazapi)
+// ============================================================================
+// Quando uma instância uazapi é renomeada/configurada com o doutor ERRADO no
+// Bia Soft, os leads chegam com nomeDoutor errado (ex: token da Dra Íris
+// enviando como "Dr. Breno"). O token é a verdade — este mapa força o
+// nomeDoutor certo pra TODOS os leads do token, no carregamento (useLeads).
+// Histórico no banco também foi corrigido; isto garante os leads FUTUROS até
+// arrumarem o nome da instância na origem.
+export const TOKEN_DOUTOR_OVERRIDES: Record<string, string> = {
+  // Instância da Dra Íris Chesini — renomeada errado pra "Dr. Breno de Souza"
+  // em 22/05/2026. O Breno real usa o token bdc7df29-….
+  'dab0f451-dcd3-4876-9094-ed6f20fc749c': 'Dra Íris Chesini',
+  // Instância do Dr. Daniel Sales — configurada errada como "Dr. Guilherme
+  // Machado" nos 2 primeiros dias (20-22/05/2026). O Guilherme real usa o
+  // token 4e68daa6-….
+  'fb8851d2-209b-4430-bd4d-cd855a6e2bed': 'Dr. Daniel Sales',
+};
+
+/** nomeDoutor forçado pro token, ou null se não há override. */
+export function getTokenDoutorOverride(token: string | null | undefined): string | null {
+  if (!token) return null;
+  return TOKEN_DOUTOR_OVERRIDES[token] ?? null;
+}
+
+// ============================================================================
 // CAMPANHAS META EXCLUÍDAS DAS MÉTRICAS
 // ============================================================================
 // Lista de campanhas que NÃO devem contar no spend/CPT/conversão do gestor/CS.

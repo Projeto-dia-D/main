@@ -271,6 +271,12 @@ export interface FetchInsightsResult {
  * @param daily se true, traz granularidade diária (time_increment=1) — usado
  *   para excluir spend de períodos em Manutenção via timeline do Bia Soft.
  */
+// Blacklist de sessão: conta que falhou com TODOS os tokens fica fora por
+// 15 min. Sem isso, CADA load re-tentava as ~10 contas mortas (dono revogou
+// acesso) com 2 tokens cada — segundos perdidos em toda atualização.
+const deadAccountUntil = new Map<string, number>();
+const DEAD_ACCOUNT_TTL_MS = 15 * 60 * 1000;
+
 export async function fetchInsightsForLinks(
   range: MetaFetchRange,
   links: LinkForInsights[],
@@ -317,6 +323,13 @@ export async function fetchInsightsForLinks(
       }));
 
       const results = await mapWithConcurrency(targets, 5, async (ad) => {
+        // Conta na blacklist (falhou com todos os tokens há <15 min): pula
+        // direto — não desperdiça tempo re-tentando a cada load.
+        const deadUntil = deadAccountUntil.get(ad.id);
+        if (deadUntil && Date.now() < deadUntil) {
+          failedAccountIds.add(ad.id);
+          return [] as CampaignInsight[];
+        }
         // Lista ordenada de tentativas: primário (declarado) primeiro, depois
         // os outros tokens disponíveis (sem duplicar o primário).
         const tries: MetaAccount[] = [];
@@ -331,6 +344,7 @@ export async function fetchInsightsForLinks(
           try {
             const rows = await fetchInsightsForAdAccount(acc, ad, range, daily);
             succeededAccountIds.add(ad.id);
+            deadAccountUntil.delete(ad.id);
             // Sucesso com um fallback (não foi o primário): registra aviso pra
             // o admin saber que o vínculo está com gestor errado no banco —
             // ajuda a fazer manutenção, mas não é fatal.
@@ -346,9 +360,11 @@ export async function fetchInsightsForLinks(
           }
         }
 
-        // Todos os tokens falharam — registra erro e marca como falha
+        // Todos os tokens falharam — registra erro, marca como falha e entra
+        // na blacklist de sessão (15 min sem re-tentar).
         errors.push(errorMessage(lastErr));
         failedAccountIds.add(ad.id);
+        deadAccountUntil.set(ad.id, Date.now() + DEAD_ACCOUNT_TTL_MS);
         return [] as CampaignInsight[];
       });
       for (const rows of results) allInsights.push(...rows);

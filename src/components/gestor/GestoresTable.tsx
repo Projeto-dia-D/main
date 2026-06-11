@@ -53,6 +53,9 @@ export function GestoresTable({ gestores }: Props) {
                   </td>
                   <td className="px-3 py-2 text-right text-white/90 font-mono whitespace-nowrap">
                     {brl(g.totalSpend)}
+                    <div className="text-[10px] text-burst-muted font-sans">
+                      Meta {brl(g.totalSpendMeta)} · Google {brl(g.totalSpendGoogle)}
+                    </div>
                   </td>
                   <td className="px-3 py-2 text-right text-burst-orange-bright font-mono font-semibold">
                     {g.totalTransferencias}

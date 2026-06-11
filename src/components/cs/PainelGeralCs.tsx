@@ -92,6 +92,10 @@ export function PainelGeralCs({ summary, lastUpdate, onOpenClientes, onOpenCses 
 
         <div className="flex flex-col gap-3">
           <StatCardCurrency icon={DollarSign} label="Investido (Fim/Venda)" value={summary.totalSpend} accent />
+          <div className="flex items-center justify-between text-[11px] text-burst-muted -mt-2 px-1">
+            <span>Meta <span className="text-white/85 font-semibold">{brl(summary.totalSpendMeta)}</span></span>
+            <span>Google <span className="text-white/85 font-semibold">{brl(summary.totalSpendGoogle)}</span></span>
+          </div>
           <StatCardNum icon={ArrowDownRight} label="Transferências" value={summary.totalTransferencias} accent onClick={onOpenClientes} />
           <StatCardNum icon={MessageCircle} label="Mensagens" value={summary.totalMensagens} />
           <StatCardNum icon={Headphones} label="CSs ativos" value={summary.cses.length} onClick={onOpenCses} />

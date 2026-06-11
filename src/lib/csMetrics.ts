@@ -8,6 +8,9 @@ import { getCsReassignFloor, isCsOculto } from '../config';
 export interface CsMetrics {
   cs: string;
   totalSpend: number;
+  /** Breakdown do totalSpend por origem (Meta Ads vs Google Ads). */
+  totalSpendMeta: number;
+  totalSpendGoogle: number;
   totalTransferencias: number;
   totalMensagens: number;
   cpt: number | null;
@@ -17,6 +20,9 @@ export interface CsMetrics {
 
 export interface CsSummary {
   totalSpend: number;
+  /** Breakdown do totalSpend por origem (Meta Ads vs Google Ads). */
+  totalSpendMeta: number;
+  totalSpendGoogle: number;
   totalTransferencias: number;
   totalMensagens: number;
   cptGeral: number | null;
@@ -44,10 +50,12 @@ export function computeCsMetrics(opts: {
   biaTimelineByClientId?: Map<string, import('./monday').FaseTransition[]>;
   biaFaseByClientId?: Map<string, string>;
   dateRange?: { start: Date | null; end: Date | null };
+  /** Gasto diário Google Ads (mesmo formato do computeGestorMetrics). */
+  googleSpend?: import('./gestorMetrics').GoogleSpendRow[];
 }): CsSummary {
   const {
     clients, insights, leads, metaLinks, doutorLinks, biaActiveIds,
-    biaTimelineByClientId, biaFaseByClientId, dateRange,
+    biaTimelineByClientId, biaFaseByClientId, dateRange, googleSpend,
   } = opts;
 
   // Set de monday_client_id que têm vínculo Meta salvo
@@ -73,6 +81,7 @@ export function computeCsMetrics(opts: {
     // CS); o gestor mantém o histórico (computeGestorMetrics do GestorTrafego
     // não passa este param).
     csReassignFloor: getCsReassignFloor,
+    googleSpend,
   });
 
   // Achata os ClientMetrics em uma só lista (de todos gestores + clientsFora)
@@ -85,6 +94,8 @@ export function computeCsMetrics(opts: {
       matchVia: null,
       metaMatchVia: null,
       spend: 0,
+      spendMeta: 0,
+      spendGoogle: 0,
       transferencias: 0,
       mensagensIniciadas: 0,
       chatsInterrompidos: 0,
@@ -130,12 +141,16 @@ export function computeCsMetrics(opts: {
     // Totais usam o `spend` JÁ AJUSTADO por timeline de Manutenção (vide
     // explicação em gestorMetrics). Não filtramos por `inactive` aqui.
     const totalSpend = cms.reduce((s, c) => s + c.spend, 0);
+    const totalSpendMeta = cms.reduce((s, c) => s + c.spendMeta, 0);
+    const totalSpendGoogle = cms.reduce((s, c) => s + c.spendGoogle, 0);
     const totalTransf = cms.reduce((s, c) => s + c.transferencias, 0);
     const totalMensagens = cms.reduce((s, c) => s + c.mensagensIniciadas, 0);
     const cpt = totalTransf > 0 ? totalSpend / totalTransf : null;
     cses.push({
       cs,
       totalSpend: Number(totalSpend.toFixed(2)),
+      totalSpendMeta: Number(totalSpendMeta.toFixed(2)),
+      totalSpendGoogle: Number(totalSpendGoogle.toFixed(2)),
       totalTransferencias: totalTransf,
       totalMensagens,
       cpt: cpt === null ? null : Number(cpt.toFixed(2)),
@@ -150,6 +165,8 @@ export function computeCsMetrics(opts: {
   });
 
   const totalSpend = cses.reduce((s, g) => s + g.totalSpend, 0);
+  const totalSpendMeta = cses.reduce((s, g) => s + g.totalSpendMeta, 0);
+  const totalSpendGoogle = cses.reduce((s, g) => s + g.totalSpendGoogle, 0);
   const totalTransferencias = cses.reduce((s, g) => s + g.totalTransferencias, 0);
   const totalMensagens = cses.reduce((s, g) => s + g.totalMensagens, 0);
   const cptGeral = totalTransferencias > 0
@@ -158,6 +175,8 @@ export function computeCsMetrics(opts: {
 
   return {
     totalSpend: Number(totalSpend.toFixed(2)),
+    totalSpendMeta: Number(totalSpendMeta.toFixed(2)),
+    totalSpendGoogle: Number(totalSpendGoogle.toFixed(2)),
     totalTransferencias,
     totalMensagens,
     cptGeral,

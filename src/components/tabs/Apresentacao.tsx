@@ -3,6 +3,7 @@ import { LayoutDashboard, AlertTriangle, Code2, Megaphone, Palette, Headphones, 
 import { useLeads } from '../../hooks/useLeads';
 import { useMondayClients } from '../../hooks/useMondayClients';
 import { useMetaSpend } from '../../hooks/useMetaSpend';
+import { useGoogleAdsSpend } from '../../hooks/useGoogleAdsSpend';
 import { useMetaLinks } from '../../hooks/useMetaLinks';
 import { useDoutorLinks } from '../../hooks/useDoutorLinks';
 import { useDesignEventos } from '../../hooks/useDesignEventos';
@@ -82,6 +83,7 @@ export function Apresentacao() {
   }, [links, mondayAllClients]);
 
   const { insights, lastUpdate: metaLastUpdate } = useMetaSpend(range, linksParaMeta);
+  const { googleSpend } = useGoogleAdsSpend(range);
   const filteredLeads = useMemo(() => filterByDateRange(leads, range), [leads, range]);
 
   const clientesParaMetricas = useMemo(() => {
@@ -102,8 +104,9 @@ export function Apresentacao() {
       clients: clientesParaMetricas, insights, leads: filteredLeads,
       metaLinks: linksByAccount, doutorLinks: doutorLinksByClient,
       biaActiveIds, biaTimelineByClientId, biaFaseByClientId, dateRange: range,
+      googleSpend,
     }),
-    [clientesParaMetricas, insights, filteredLeads, linksByAccount, doutorLinksByClient, biaActiveIds, biaTimelineByClientId, biaFaseByClientId, range],
+    [clientesParaMetricas, insights, filteredLeads, linksByAccount, doutorLinksByClient, biaActiveIds, biaTimelineByClientId, biaFaseByClientId, range, googleSpend],
   );
 
   const csSummary = useMemo(
@@ -111,8 +114,9 @@ export function Apresentacao() {
       ...gestorSummary, clients: clientesParaMetricas, insights, leads: filteredLeads,
       metaLinks: linksByAccount, doutorLinks: doutorLinksByClient,
       biaActiveIds, biaTimelineByClientId, biaFaseByClientId, dateRange: range,
+      googleSpend,
     } as Parameters<typeof computeCsMetrics>[0]),
-    [gestorSummary, clientesParaMetricas, insights, filteredLeads, linksByAccount, doutorLinksByClient, biaActiveIds, biaTimelineByClientId, biaFaseByClientId, range],
+    [gestorSummary, clientesParaMetricas, insights, filteredLeads, linksByAccount, doutorLinksByClient, biaActiveIds, biaTimelineByClientId, biaFaseByClientId, range, googleSpend],
   );
 
   const designSummary = useMemo(
@@ -283,6 +287,8 @@ export function Apresentacao() {
                   tierLabel={tierLabelCpt(g.cpt !== null ? tierForCpt(g.cpt) : 0)}
                   isFirst={idx === 0}
                   clienteDestaque={findDestaqueClient(g.clients)}
+                  spendMeta={g.totalSpendMeta}
+                  spendGoogle={g.totalSpendGoogle}
                 />
               ))}
           </DashboardComCards>
@@ -357,6 +363,8 @@ export function Apresentacao() {
                   tierLabel={tierLabelCpt(c.cpt !== null ? tierForCpt(c.cpt) : 0)}
                   isFirst={idx === 0}
                   clienteDestaque={findDestaqueClient(c.clients)}
+                  spendMeta={c.totalSpendMeta}
+                  spendGoogle={c.totalSpendGoogle}
                 />
               ))}
           </DashboardComCards>
@@ -734,7 +742,7 @@ function getInitials(name: string): string {
 // ============================================================
 function PessoaCard({
   nome, photoUrl, metricaPrincipal, metricaLabel, tier, tierLabel, isFirst = false,
-  clienteDestaque = null,
+  clienteDestaque = null, spendMeta, spendGoogle,
 }: {
   nome: string;
   photoUrl: string | null;
@@ -747,6 +755,10 @@ function PessoaCard({
   /** Cliente destaque (alto volume de transf, baixo CPT) — exibido a direita
    *  no card pra preencher o espaco vazio. null quando nenhum cliente qualifica. */
   clienteDestaque?: ClientMetrics | null;
+  /** Breakdown do investido por origem — quando presentes, mostra
+   *  "Meta R$X · Google R$Y" no rodapé do card (gestor/CS). */
+  spendMeta?: number;
+  spendGoogle?: number;
 }) {
   const cor = tier === 1
     ? { bg: 'bg-green-500/15', border: 'border-green-500/60', text: 'text-green-400', glow: 'shadow-[0_0_24px_rgba(34,197,94,0.25)]' }
@@ -799,6 +811,16 @@ function PessoaCard({
         >
           {tierLabel}
         </div>
+        {(spendMeta !== undefined || spendGoogle !== undefined) && (
+          <div
+            className="text-burst-muted leading-tight whitespace-nowrap"
+            style={{ fontSize: 'clamp(8px, 1.5cqh, 11px)' }}
+          >
+            Meta <span className="text-white/85 font-semibold">{brl(spendMeta ?? 0)}</span>
+            {' · '}
+            Google <span className="text-white/85 font-semibold">{brl(spendGoogle ?? 0)}</span>
+          </div>
+        )}
       </div>
 
       {/* CLIENTE DESTAQUE — aparece pra TODO gestor/CS que tiver cliente com

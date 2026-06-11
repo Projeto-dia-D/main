@@ -172,25 +172,48 @@ export function parseDataEntrada(s: string | null | undefined): Date | null {
   return isNaN(iso.getTime()) ? null : iso;
 }
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 async function gql<T extends { errors?: Array<{ message: string }>; error_message?: string }>(
   query: string,
   variables: Record<string, unknown> = {}
 ): Promise<T> {
-  const res = await fetch(MONDAY_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: config.MONDAY_TOKEN,
-      'API-Version': MONDAY_API_VERSION,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-  const data: T = await res.json();
-  if (!res.ok || data.errors || data.error_message) {
-    const msg = data.error_message || data.errors?.[0]?.message || res.statusText;
-    throw new Error(`[Monday] ${msg}`);
+  // Retry com backoff pra rate limit do Monday. O budget de complexidade
+  // reseta a cada 60s — esperar e tentar de novo resolve a maioria dos
+  // "Rate limit exceeded for the field" sem derrubar o load inteiro.
+  const MAX_TRIES = 3;
+  let lastErr: Error | null = null;
+  for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+    const res = await fetch(MONDAY_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: config.MONDAY_TOKEN,
+        'API-Version': MONDAY_API_VERSION,
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+    const data: T = await res.json();
+    if (!res.ok || data.errors || data.error_message) {
+      const msg = data.error_message || data.errors?.[0]?.message || res.statusText;
+      const isRateLimit = /rate limit|complexity|maximum number of requests/i.test(msg) || res.status === 429;
+      lastErr = new Error(`[Monday] ${msg}`);
+      if (isRateLimit && attempt < MAX_TRIES) {
+        // "reset in X seconds" quando o Monday informa; senão 8s/20s + jitter
+        // (curto o bastante pra não travar o load — o cache segura a tela)
+        const m = msg.match(/reset in (\d+)/i);
+        const waitMs = m
+          ? (parseInt(m[1], 10) + 2) * 1000
+          : (attempt === 1 ? 8_000 : 20_000) + Math.random() * 3_000;
+        console.warn(`[Monday] rate limit (tentativa ${attempt}/${MAX_TRIES}) — aguardando ${Math.round(waitMs / 1000)}s pra retry`);
+        await sleep(waitMs);
+        continue;
+      }
+      throw lastErr;
+    }
+    return data;
   }
-  return data;
+  throw lastErr ?? new Error('[Monday] erro desconhecido');
 }
 
 function findColumnId(columns: ColumnRaw[], titles: string[]): string | null {
@@ -247,8 +270,11 @@ const BOARD_ITEMS_QUERY = `
   }
 `;
 
+// IMPORTANTE: $colIds também aqui! Sem o filtro, as páginas 2+ traziam TODAS
+// as colunas do board (~50) em vez das ~8 usadas — 6x mais complexidade por
+// página, principal causa do "Rate limit exceeded for the field".
 const NEXT_PAGE_QUERY = `
-  query ($cursor: String!, $limit: Int!) {
+  query ($cursor: String!, $limit: Int!, $colIds: [String!]) {
     next_items_page(cursor: $cursor, limit: $limit) {
       cursor
       items {
@@ -256,7 +282,7 @@ const NEXT_PAGE_QUERY = `
         name
         updated_at
         group { id title }
-        column_values {
+        column_values(ids: $colIds) {
           id
           text
           type
@@ -297,7 +323,7 @@ async function fetchAllBoardItems(
 
   let cursor = page.cursor;
   while (cursor) {
-    const next = await gql<NextPageResp>(NEXT_PAGE_QUERY, { cursor, limit: PAGE_LIMIT });
+    const next = await gql<NextPageResp>(NEXT_PAGE_QUERY, { cursor, limit: PAGE_LIMIT, colIds });
     const np = next.data?.next_items_page;
     if (!np) break;
     out.push(...np.items);
@@ -383,7 +409,32 @@ export function getClientChurnCutoff(client: MondayClient): Date | null {
   return null;
 }
 
-export async function fetchMondayClients(): Promise<FetchClientsResult> {
+/**
+ * Memoiza um fetch pesado: chamadas concorrentes compartilham a MESMA promise
+ * (dedupe) e o resultado vale por `ttlMs`. Erro NÃO é cacheado — a próxima
+ * chamada tenta de novo. Essencial porque useMondayClients é montado em ~8
+ * componentes: sem isso, cada aba/montagem disparava uma paginação completa
+ * do board (principal multiplicador do rate limit do Monday).
+ */
+function memoizeFetch<T>(fn: () => Promise<T>, ttlMs: number): () => Promise<T> {
+  let inflight: Promise<T> | null = null;
+  let last: { value: T; at: number } | null = null;
+  return () => {
+    if (last && Date.now() - last.at < ttlMs) return Promise.resolve(last.value);
+    if (inflight) return inflight;
+    inflight = fn()
+      .then((v) => {
+        last = { value: v, at: Date.now() };
+        return v;
+      })
+      .finally(() => {
+        inflight = null;
+      });
+    return inflight;
+  };
+}
+
+async function fetchMondayClientsRaw(): Promise<FetchClientsResult> {
   const boardId = config.MONDAY_BOARD_ID;
   if (!boardId || !config.MONDAY_TOKEN) {
     throw new Error('[Monday] Token ou board ID ausentes no .env');
@@ -475,6 +526,9 @@ export async function fetchMondayClients(): Promise<FetchClientsResult> {
   };
 }
 
+/** Versão memoizada (dedupe + TTL 4 min) — ver memoizeFetch. */
+export const fetchMondayClients = memoizeFetch(fetchMondayClientsRaw, 4 * 60_000);
+
 // ============================================================================
 // Board "📳 Clientes BIA Soft" (id 9887531051)
 //
@@ -533,14 +587,15 @@ const BIA_LIST_QUERY = `
   }
 `;
 
+// $colIds aqui também — mesmo motivo do NEXT_PAGE_QUERY (rate limit).
 const BIA_NEXT_PAGE_QUERY = `
-  query ($cursor: String!, $limit: Int!) {
+  query ($cursor: String!, $limit: Int!, $colIds: [String!]) {
     next_items_page(cursor: $cursor, limit: $limit) {
       cursor
       items {
         id
         name
-        column_values {
+        column_values(ids: $colIds) {
           id
           text
           ... on BoardRelationValue { linked_item_ids }
@@ -655,7 +710,7 @@ export interface BiaSoftData {
  * - Conjunto de nomes com Fase ativa (I.A ativa / Manutenção)
  * - Mapa cliente → responsável (Gabriel Velho / Eduardo Henckemaier)
  */
-export async function fetchBiaSoftData(): Promise<BiaSoftData> {
+async function fetchBiaSoftDataRaw(): Promise<BiaSoftData> {
   const activeNames = new Set<string>();
   const allNames = new Set<string>();
   const activeIds = new Set<string>();
@@ -723,19 +778,20 @@ export async function fetchBiaSoftData(): Promise<BiaSoftData> {
   }
 
   try {
+    const biaColIds = [
+      BIA_FASE_COL_ID,
+      BIA_RESP_COL_ID,
+      BIA_CLIENT_REL_COL_ID,
+      BIA_EMAIL_PROG_COL_ID,
+      BIA_EMAIL_CS_COL_ID,
+      BIA_EMAIL_GESTOR_COL_ID,
+      BIA_CS_COL_ID,
+      BIA_GESTOR_COL_ID,
+    ];
     const first = await gql<BiaListResp>(BIA_LIST_QUERY, {
       boardId: BIA_SOFT_BOARD_ID,
       limit: PAGE_LIMIT,
-      colIds: [
-        BIA_FASE_COL_ID,
-        BIA_RESP_COL_ID,
-        BIA_CLIENT_REL_COL_ID,
-        BIA_EMAIL_PROG_COL_ID,
-        BIA_EMAIL_CS_COL_ID,
-        BIA_EMAIL_GESTOR_COL_ID,
-        BIA_CS_COL_ID,
-        BIA_GESTOR_COL_ID,
-      ],
+      colIds: biaColIds,
     });
     const page = first.data?.boards?.[0]?.items_page;
     if (page) {
@@ -745,6 +801,7 @@ export async function fetchBiaSoftData(): Promise<BiaSoftData> {
         const next = await gql<BiaNextResp>(BIA_NEXT_PAGE_QUERY, {
           cursor,
           limit: PAGE_LIMIT,
+          colIds: biaColIds,
         });
         const np = next.data?.next_items_page;
         if (!np) break;
@@ -771,6 +828,9 @@ export async function fetchBiaSoftData(): Promise<BiaSoftData> {
     programadorByEmail,
   };
 }
+
+/** Versão memoizada (dedupe + TTL 4 min) — ver memoizeFetch. */
+export const fetchBiaSoftData = memoizeFetch(fetchBiaSoftDataRaw, 4 * 60_000);
 
 // ============================================================================
 // Activity Log do Bia Soft — timeline de mudanças de Fase por cliente
@@ -1222,12 +1282,14 @@ const AUTH_EMAILS_QUERY = `
   }
 `;
 
+// ids filtradas também nas páginas 2+ (mesmas colunas que processItem usa) —
+// sem isso cada página trazia TODAS as colunas (rate limit).
 const AUTH_EMAILS_NEXT_QUERY = `
   query ($cursor: String!, $limit: Int!) {
     next_items_page(cursor: $cursor, limit: $limit) {
       cursor
       items {
-        column_values {
+        column_values(ids: ["person", "lookup_mkzp69ax", "lookup_mkzphsas", "text_mm1kad0k", "text_mm1k92bf", "text_mm1m7x5r"]) {
           id
           text
           ... on MirrorValue { display_value }
@@ -1822,12 +1884,12 @@ const DESIGN_REL_LIST_QUERY = `
 `;
 
 const DESIGN_REL_NEXT_QUERY = `
-  query ($cursor: String!, $limit: Int!) {
+  query ($cursor: String!, $limit: Int!, $colIds: [String!]) {
     next_items_page(cursor: $cursor, limit: $limit) {
       cursor
       items {
         id
-        column_values {
+        column_values(ids: $colIds) {
           id
           ... on BoardRelationValue { linked_item_ids }
         }
@@ -1927,6 +1989,7 @@ export async function fetchDesignClientLinks(): Promise<DesignClientLinks> {
           const next = await gql<DesignRelNextResp>(DESIGN_REL_NEXT_QUERY, {
             cursor,
             limit: PAGE_LIMIT,
+            colIds: [relColId],
           });
           const np = next.data?.next_items_page;
           if (!np) break;

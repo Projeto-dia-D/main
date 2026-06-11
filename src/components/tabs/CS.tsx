@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { AlertTriangle, Link2 } from 'lucide-react';
 import { useLeads } from '../../hooks/useLeads';
 import { useMetaSpend } from '../../hooks/useMetaSpend';
+import { useGoogleAdsSpend } from '../../hooks/useGoogleAdsSpend';
 import { useMondayClients } from '../../hooks/useMondayClients';
 import { useMetaLinks } from '../../hooks/useMetaLinks';
 import { useDoutorLinks } from '../../hooks/useDoutorLinks';
@@ -92,6 +93,7 @@ export function CS() {
   }, [links, mondayAllClients]);
 
   const { insights, errors: metaErrors, lastUpdate } = useMetaSpend(range, linksParaMeta);
+  const { googleSpend } = useGoogleAdsSpend(range);
 
   const filteredLeads = useMemo(
     () => filterByDateRange(leads, range),
@@ -125,6 +127,7 @@ export function CS() {
         biaTimelineByClientId,
         biaFaseByClientId,
         dateRange: range,
+        googleSpend,
       }),
     [
       clientesParaMetricas,
@@ -136,6 +139,7 @@ export function CS() {
       biaTimelineByClientId,
       biaFaseByClientId,
       range,
+      googleSpend,
     ]
   );
 
@@ -150,6 +154,8 @@ export function CS() {
     if (hasFullAccess(user) && viewAsCs) {
       const filteredCses = fullSummary.cses.filter((c) => c.cs === viewAsCs);
       const totalSpend = filteredCses.reduce((s, c) => s + c.totalSpend, 0);
+      const totalSpendMeta = filteredCses.reduce((s, c) => s + c.totalSpendMeta, 0);
+      const totalSpendGoogle = filteredCses.reduce((s, c) => s + c.totalSpendGoogle, 0);
       const totalTransferencias = filteredCses.reduce((s, c) => s + c.totalTransferencias, 0);
       const totalMensagens = filteredCses.reduce((s, c) => s + c.totalMensagens, 0);
       const cptGeral = totalTransferencias > 0
@@ -159,6 +165,8 @@ export function CS() {
         ...fullSummary,
         cses: filteredCses,
         totalSpend: Number(totalSpend.toFixed(2)),
+        totalSpendMeta: Number(totalSpendMeta.toFixed(2)),
+        totalSpendGoogle: Number(totalSpendGoogle.toFixed(2)),
         totalTransferencias,
         totalMensagens,
         cptGeral,
@@ -171,6 +179,8 @@ export function CS() {
         nameMatchesScope(user.scope!, c.cs)
       );
       const totalSpend = filteredCses.reduce((s, c) => s + c.totalSpend, 0);
+      const totalSpendMeta = filteredCses.reduce((s, c) => s + c.totalSpendMeta, 0);
+      const totalSpendGoogle = filteredCses.reduce((s, c) => s + c.totalSpendGoogle, 0);
       const totalTransferencias = filteredCses.reduce((s, c) => s + c.totalTransferencias, 0);
       const totalMensagens = filteredCses.reduce((s, c) => s + c.totalMensagens, 0);
       const cptGeral = totalTransferencias > 0
@@ -180,6 +190,8 @@ export function CS() {
         ...fullSummary,
         cses: filteredCses,
         totalSpend: Number(totalSpend.toFixed(2)),
+        totalSpendMeta: Number(totalSpendMeta.toFixed(2)),
+        totalSpendGoogle: Number(totalSpendGoogle.toFixed(2)),
         totalTransferencias,
         totalMensagens,
         cptGeral,
@@ -343,6 +355,9 @@ export function CS() {
                     metricaLabel: 'CPT',
                     tier: c.cpt !== null ? tierForCpt(c.cpt) : 0,
                     tierLabel: tierLabelCpt(c.cpt !== null ? tierForCpt(c.cpt) : 0),
+                    spendTotal: c.totalSpend,
+                    spendMeta: c.totalSpendMeta,
+                    spendGoogle: c.totalSpendGoogle,
                     onClick: () => setDrillAllClientesCs(c.cs),
                   }))}
               />

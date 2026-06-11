@@ -1,6 +1,7 @@
 import { Trophy } from 'lucide-react';
 import type { SalaryTier } from '../../lib/types';
 import { Avatar } from '../Avatar';
+import { brl } from '../../lib/gestorMetrics';
 
 interface PessoaItem {
   /** Identificador único — usado como key do React. */
@@ -17,6 +18,11 @@ interface PessoaItem {
   tier: SalaryTier;
   /** Label do tier (ex: "1 SALÁRIO"). */
   tierLabel: string;
+  /** Investido total + breakdown por origem. Quando presentes, o card ganha
+   *  uma faixa inferior "INVESTIDO / META / GOOGLE" (legível em TV). */
+  spendTotal?: number;
+  spendMeta?: number;
+  spendGoogle?: number;
   /** Click callback opcional — abre drill da pessoa. */
   onClick?: () => void;
 }
@@ -71,33 +77,46 @@ function PessoaCardCompact({ pessoa, rank }: { pessoa: PessoaItem; rank: number 
   const firstName = pessoa.nome.split(/\s+/)[0] ?? pessoa.nome;
   const isFirst = rank === 1;
 
+  const temSpend = pessoa.spendMeta !== undefined || pessoa.spendGoogle !== undefined;
+
   const inner = (
     <div
-      className={`rounded-xl border-2 ${cor.border} ${cor.bg} ${cor.glow} flex items-stretch overflow-hidden transition-all`}
+      className={`rounded-xl border-2 ${cor.border} ${cor.bg} ${cor.glow} flex flex-col overflow-hidden transition-all`}
     >
-      {/* Foto à esquerda */}
-      <div className="shrink-0 flex items-center justify-center pl-3 py-3">
-        <Avatar src={pessoa.photoUrl} name={pessoa.nome} size={64} className={`ring-2 ${cor.border}`} />
+      <div className="flex items-stretch">
+        {/* Foto à esquerda */}
+        <div className="shrink-0 flex items-center justify-center pl-3 py-3">
+          <Avatar src={pessoa.photoUrl} name={pessoa.nome} size={64} className={`ring-2 ${cor.border}`} />
+        </div>
+
+        {/* Conteúdo à direita */}
+        <div className="flex-1 min-w-0 flex flex-col justify-center px-3 py-2 gap-0.5">
+          <div className="text-white font-display tracking-wide truncate text-base uppercase flex items-center gap-1.5">
+            <span className="truncate" title={pessoa.nome}>{firstName}</span>
+            {isFirst && (
+              <Trophy size={14} className="text-yellow-400 shrink-0 drop-shadow-[0_0_6px_rgba(250,204,21,0.7)]" />
+            )}
+          </div>
+          <div className={`font-display ${cor.text} tracking-tight leading-none text-3xl`}>
+            {pessoa.metricaPrincipal}
+          </div>
+          <div className="text-[10px] text-burst-muted leading-none uppercase tracking-wider">
+            {pessoa.metricaLabel}
+          </div>
+          <div className={`text-[10px] uppercase tracking-widest font-bold ${cor.text} mt-1 leading-none`}>
+            {pessoa.tierLabel}
+          </div>
+        </div>
       </div>
 
-      {/* Conteúdo à direita */}
-      <div className="flex-1 min-w-0 flex flex-col justify-center px-3 py-2 gap-0.5">
-        <div className="text-white font-display tracking-wide truncate text-base uppercase flex items-center gap-1.5">
-          <span className="truncate" title={pessoa.nome}>{firstName}</span>
-          {isFirst && (
-            <Trophy size={14} className="text-yellow-400 shrink-0 drop-shadow-[0_0_6px_rgba(250,204,21,0.7)]" />
-          )}
+      {/* Faixa de investimento — INVESTIDO / META / GOOGLE (tamanho de TV) */}
+      {temSpend && (
+        <div className={`border-t-2 ${cor.border} bg-black/30 px-3 py-2 grid grid-cols-3 gap-2`}>
+          <SpendCol label="Investido" value={pessoa.spendTotal ?? ((pessoa.spendMeta ?? 0) + (pessoa.spendGoogle ?? 0))} accentClass={cor.text} />
+          <SpendCol label="Meta" value={pessoa.spendMeta ?? 0} />
+          <SpendCol label="Google" value={pessoa.spendGoogle ?? 0} />
         </div>
-        <div className={`font-display ${cor.text} tracking-tight leading-none text-3xl`}>
-          {pessoa.metricaPrincipal}
-        </div>
-        <div className="text-[10px] text-burst-muted leading-none uppercase tracking-wider">
-          {pessoa.metricaLabel}
-        </div>
-        <div className={`text-[10px] uppercase tracking-widest font-bold ${cor.text} mt-1 leading-none`}>
-          {pessoa.tierLabel}
-        </div>
-      </div>
+      )}
     </div>
   );
 
@@ -113,6 +132,23 @@ function PessoaCardCompact({ pessoa, rank }: { pessoa: PessoaItem; rank: number 
     );
   }
   return inner;
+}
+
+/** Coluna da faixa de investimento — label pequeno + valor grande (TV). */
+function SpendCol({ label, value, accentClass }: { label: string; value: number; accentClass?: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] xl:text-xs uppercase tracking-wider text-burst-muted leading-none mb-1">
+        {label}
+      </div>
+      <div
+        className={`font-display leading-none text-lg xl:text-2xl whitespace-nowrap ${accentClass ?? 'text-white/90'}`}
+        title={brl(value)}
+      >
+        {brl(value)}
+      </div>
+    </div>
+  );
 }
 
 function tierStyle(tier: SalaryTier) {

@@ -56,11 +56,14 @@ export function ClienteDrilldown({ cm }: Props) {
           valueText={brl(cm.spend)}
           active={tab === 'campanhas'}
           onClick={() => setTab('campanhas')}
-          subText={
+          subText={[
+            cm.spendGoogle > 0
+              ? `Meta ${brl(cm.spendMeta)} · Google ${brl(cm.spendGoogle)}`
+              : null,
             cm.spendBrutoTotal != null && cm.spendBrutoTotal > cm.spend + 0.01
               ? `Total: ${brl(cm.spendBrutoTotal)}`
-              : undefined
-          }
+              : null,
+          ].filter(Boolean).join('  •  ') || undefined}
         />
       </div>
 
