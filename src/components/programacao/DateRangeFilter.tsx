@@ -37,7 +37,15 @@ function ontemRange(): DateRange {
 // Exportada pra que outras abas (Gestor / CS) possam usar como filtro inicial.
 export function diaDRange(): DateRange {
   const now = new Date();
-  const monthOffset = now.getDate() < 12 ? -1 : 0;
+  let monthOffset = now.getDate() < 12 ? -1 : 0;
+  // EXCEÇÃO JUNHO/2026 (pedido em 12/06): a virada do ciclo deste mês foi
+  // adiada pro dia 15. Até 14/06 o "Dia D" continua mostrando o ciclo
+  // anterior (12/05 → hoje). NADA é apagado: em 15/06 o filtro passa a
+  // mostrar o ciclo novo (12/06 → hoje), já incluindo os dias 12-14/06.
+  // Este bloco auto-expira em 15/06/2026 — pode ser removido depois.
+  if (now.getFullYear() === 2026 && now.getMonth() === 5 && now.getDate() >= 12 && now.getDate() <= 14) {
+    monthOffset = -1;
+  }
   const start = new Date(now.getFullYear(), now.getMonth() + monthOffset, 12, 0, 0, 0, 0);
   const end = new Date();
   end.setHours(23, 59, 59, 999);
