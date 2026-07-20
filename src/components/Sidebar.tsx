@@ -28,17 +28,24 @@ const ITEMS: { key: TabKey; label: string; icon: LucideIcon }[] = [
  * Quais tabs cada papel pode ver. Admin vê tudo. CS e Gestor NÃO veem Design
  * nem Notificações. Programador vê tudo (programadores ajudam no design).
  *
+ * "Programação" é EXCLUSIVA de programador + admin/super — expõe bônus, taxa e
+ * performance de TODOS os doutores. CS, gestor, designer e papéis desconhecidos
+ * NÃO podem vê-la.
  * "Notificações" é só pra hasFullAccess (admin + super programador).
  * "Anúncios" e ferramenta de dev — programador (qualquer) + admin/super.
  */
 function visibleTabsForRole(role: string | null | undefined): Set<TabKey> {
-  if (role === 'cs') return new Set(['programacao', 'cs', 'calendario']);
-  if (role === 'gestor') return new Set(['programacao', 'gestor', 'calendario']);
+  if (role === 'cs') return new Set(['cs', 'calendario']);
+  if (role === 'gestor') return new Set(['gestor', 'calendario']);
   if (role === 'designer') return new Set(['design', 'calendario']);
   // programador comum (sem viewAll): vê o que faz sentido pra ele
   // — Saúde do Cliente é exclusivo pra admin/super programador
   // — Anúncios e dev-tool, todo programador ve
-  return new Set(['programacao', 'design', 'cs', 'gestor', 'calendario', 'anuncios']);
+  if (role === 'programador') {
+    return new Set(['programacao', 'design', 'cs', 'gestor', 'calendario', 'anuncios']);
+  }
+  // Papel desconhecido / sem role: mínimo seguro, NUNCA Programação.
+  return new Set(['calendario']);
 }
 
 export function Sidebar({ active, onChange, collapsed, onToggleCollapsed }: Props) {

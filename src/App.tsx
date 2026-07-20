@@ -54,7 +54,8 @@ export default function App() {
     if (user.role === 'gestor') return 'gestor';
     if (user.role === 'cs') return 'cs';
     if (user.role === 'designer') return 'design';
-    return 'programacao';
+    if (user.role === 'programador') return 'programacao';
+    return 'calendario'; // role desconhecido: nunca cai na Programação
   })();
   const [active, setActive] = useState<TabKey>(defaultTab);
 
@@ -85,6 +86,14 @@ export default function App() {
     writeCurrentUser(user);
   }, [user]);
 
+  // Quando o usuário logado muda (login / troca de conta), volta pra tab
+  // default do papel dele — evita cair numa tab proibida (ex: um CS logando
+  // enquanto `active` ainda era 'programacao' do estado inicial pré-login).
+  useEffect(() => {
+    if (user) setActive(defaultTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.email]);
+
   function toggleCollapsed() {
     setCollapsed((v) => {
       const next = !v;
@@ -113,6 +122,11 @@ export default function App() {
 
   // CS e Gestor NÃO podem acessar Design. Admin, Programador e Designer podem.
   const canAccessDesign = user.role !== 'cs' && user.role !== 'gestor';
+
+  // Programação é EXCLUSIVA de programador + admin/super (bônus, taxa e
+  // performance de TODOS os doutores). CS, gestor, designer e papéis
+  // desconhecidos NÃO podem ver.
+  const canAccessProgramacao = hasFullAccess(user) || user.role === 'programador';
 
   function handleLogout() {
     writeCurrentUser(null);
@@ -166,7 +180,7 @@ export default function App() {
             </div>
           </header>
           <div className="flex-1 overflow-y-auto scrollbar-thin">
-            {active === 'programacao' && <Programacao />}
+            {active === 'programacao' && canAccessProgramacao && <Programacao />}
             {active === 'design' && canAccessDesign && <Design />}
             {active === 'cs' && <CS />}
             {active === 'gestor' && <GestorTrafego />}

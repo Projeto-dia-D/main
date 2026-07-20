@@ -32,9 +32,18 @@ import { VinculacoesModal } from '../gestor/VinculacoesModal';
 import { DiagnosticoOrfaos } from '../gestor/DiagnosticoOrfaos';
 import { DiagnosticoCampanhasOrfas } from '../gestor/DiagnosticoCampanhasOrfas';
 import { DoutoresSemVinculoMeta } from '../gestor/DoutoresSemVinculoMeta';
+import { DoutoresSemMetricaRenan } from '../gestor/DoutoresSemMetricaRenan';
 import { ListasClientes } from '../gestor/ListasClientes';
 import { RankingPessoasCards } from '../gestor/RankingPessoasCards';
 import { brl, tierForCpt, tierLabelCpt } from '../../lib/gestorMetrics';
+
+// Painel "Métricas do Meta não puxadas (acesso do Renan)" é EXCLUSIVO para os
+// desenvolvedores (Gabriel Velho, Eduardo Henckemaier) e o Renan.
+const PAINEL_RENAN_EMAILS = new Set([
+  'gabrielvelho@burstmidia.com',
+  'eduardohenckemaier@burstmidia.com',
+  'renan@burstmidia.com',
+]);
 
 type ModalKind = 'clientes' | 'campanhas' | 'gestores' | 'vinculos' | null;
 
@@ -459,6 +468,21 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
           }}
         />
       )}
+
+      {/* PAINEL EXCLUSIVO (devs Gabriel/Eduardo + Renan): doutores com Bia ativa
+          cujas métricas de Meta NÃO são puxadas pelo token do Renan. */}
+      {PAINEL_RENAN_EMAILS.has((user.email || '').trim().toLowerCase()) &&
+        !mondayLoading && mondayClientsAll.length > 0 && (
+          <DoutoresSemMetricaRenan
+            allClients={mondayClientsAll}
+            biaActiveIds={biaActiveIds}
+            links={links}
+            onVincular={(ids) => {
+              setVinculosPreFilter(ids);
+              setOpenModal('vinculos');
+            }}
+          />
+        )}
 
       {showLoadingOverlay ? (
         <div className="flex items-center justify-center min-h-[40vh]">

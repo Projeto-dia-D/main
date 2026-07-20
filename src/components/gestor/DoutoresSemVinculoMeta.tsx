@@ -46,14 +46,16 @@ export function DoutoresSemVinculoMeta({ allClients, links, biaAllIds, onAbrirVi
         <AlertTriangle size={20} className="text-red-400 shrink-0 mt-0.5" />
         <div className="flex-1 min-w-0">
           <div className="font-display text-lg text-white tracking-wide flex items-center gap-2 flex-wrap">
-            <span>{semVinculo.length} doutor(es) ativos sem conta Meta vinculada</span>
+            <span>{semVinculo.length} clientes na Bia (qualquer fase) sem conta Meta vinculada</span>
             <span className="text-xs uppercase tracking-widest text-red-400 px-2 py-0.5 rounded bg-red-500/10 border border-red-500/30">
               Crítico
             </span>
           </div>
           <p className="text-sm text-burst-muted mt-1">
-            Doutores que rodam tráfego na Burst (não churn, não pausados, não jurídico) e
-            ainda não têm conta Meta vinculada — o spend deles não aparece nas métricas.
+            Clientes no board <strong className="text-white/80">Bia Soft em QUALQUER fase</strong> (onboarding,
+            sincronização, rodando…), exceto churn / pausados / jurídico, e ainda sem conta Meta vinculada. É o
+            conjunto <strong className="text-white/80">amplo</strong> — nem todos estão com a IA de fato ativa.
+            Pra "só quem está rodando", veja o painel <em>Métricas não puxadas (Renan)</em> abaixo.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">

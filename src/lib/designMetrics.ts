@@ -32,6 +32,16 @@ export interface DesignEvento {
   // Data REAL de quando virou Feito (pego do Monday Activity Log).
   // Quando presente, tem prioridade sobre log_criacao no agrupamento por período.
   data_feito: string | null;
+  // === "Atribuir métricas" (decisão do Renan, por manutenção) ===
+  // contabilizar: a manutenção pesa no %? (default true no banco). SÓ o Renan edita.
+  // revisado: o Renan já olhou? justificativa: nota do DESIGNER (enquanto !revisado).
+  contabilizar?: boolean | null;
+  revisado?: boolean | null;
+  justificativa?: string | null;
+  revisado_por?: string | null;
+  revisado_em?: string | null;
+  justificativa_por?: string | null;
+  justificativa_em?: string | null;
 }
 
 export interface DesignerMetrics {
@@ -399,20 +409,17 @@ export function computeDesignMetrics(
     const manutsC = evs.filter((e) => e.tipo_evento === 'manutencao_c');
 
     const feitasUnicas = new Set(feitos.map(uniqueDemandaKey)).size;
-    // Métrica de manutenção considera SÓ manutenção do cliente (`manutencao_c`,
-    // label "MANUT. C" no Monday). A manutenção do gestor (`manutencao`) ainda
-    // é carregada e fica disponível em `totalEventosManutencao` + `eventos`,
-    // mas não pesa no % nem no tier de bônus do designer.
-    const manutsConsideradas = manutsC;
-    const manutencoesUnicas = new Set(manutsConsideradas.map(uniqueDemandaKey)).size;
+    // Métrica de manutenção (atualizada): considera AMBAS — cliente
+    // (`manutencao_c`) E gestor (`manutencao`) — mas SÓ as que o Renan deixou
+    // contar (`contabilizar !== false`; default true). Ele desmarca as injustas
+    // na tela "Atribuir métricas". Os brutos seguem em `totalEventosManutencao*`.
+    const manutsContam = [...manuts, ...manutsC].filter((e) => e.contabilizar !== false);
+    const manutencoesUnicas = new Set(manutsContam.map(uniqueDemandaKey)).size;
 
-    // % manutenção: regra ATUAL (atualizada 27/05/2026) usa EVENTOS BRUTOS,
-    // não dedupe. Fórmula: eventos_manutencao_cliente / eventos_entrega × 100.
-    // Conceito: "pra cada N vezes que o designer clicou em 'Feito', o cliente
-    // pediu M ajustes" — mede esforço de retrabalho, não 'qualidade da
-    // primeira entrega'. Se uma demanda volta 3× pelo cliente, ela pesa 3
-    // no numerador (não 1 como era antes via deduplicação).
-    const pct = feitos.length > 0 ? (manutsC.length / feitos.length) * 100 : 0;
+    // % manutenção: EVENTOS BRUTOS / entregas × 100 (regra de 27/05/2026 mantida),
+    // agora somando manutenção cliente + gestor que contam. "Pra cada N 'Feito',
+    // M ajustes que contam" — mede retrabalho atribuído.
+    const pct = feitos.length > 0 ? (manutsContam.length / feitos.length) * 100 : 0;
 
     // demandas/dia usa o total de ENTREGAS (cada "Feito" no Monday = 1 entrega).
     // Subtrai dias de atestado do designer dentro do período — pra não penalizar
@@ -466,14 +473,11 @@ export function computeDesignMetrics(
   const allManutsC = filtered.filter((e) => e.tipo_evento === 'manutencao_c');
 
   const feitasUnicas = new Set(allFeitos.map(uniqueDemandaKey)).size;
-  // Idem da contagem por designer: % geral conta SÓ manutenção do cliente
-  // (`manutencao_c`). A do gestor continua disponível em `totalEventosManutencao`
-  // pra não perder o dado, mas não entra no % usado para o bônus/tier.
-  const manutencoesUnicas = new Set(allManutsC.map(uniqueDemandaKey)).size;
-  // % geral: fórmula EVENTOS / EVENTOS (consistente com pct por designer).
-  // Mede esforço total de retrabalho do time, não a taxa de aprovação de
-  // primeiras entregas.
-  const pctGeral = allFeitos.length > 0 ? (allManutsC.length / allFeitos.length) * 100 : 0;
+  // % geral (consistente com o por designer): cliente + gestor que CONTAM
+  // (`contabilizar !== false`).
+  const allManutsContam = [...allManuts, ...allManutsC].filter((e) => e.contabilizar !== false);
+  const manutencoesUnicas = new Set(allManutsContam.map(uniqueDemandaKey)).size;
+  const pctGeral = allFeitos.length > 0 ? (allManutsContam.length / allFeitos.length) * 100 : 0;
 
   return {
     feitasUnicas,

@@ -12,6 +12,7 @@ import { PainelMiniDesigner } from '../design/PainelMiniDesigner';
 import { RankingDesigners } from '../design/RankingDesigners';
 import { EventosTable } from '../design/EventosTable';
 import { EventosSemDesignerEditor } from '../design/EventosSemDesignerEditor';
+import { AtribuirMetricas } from '../design/AtribuirMetricas';
 import { useUser, hasFullAccess } from '../../lib/userContext';
 import { nameMatchesScope } from '../../lib/monday';
 import { primeiroDesignerAtivo } from '../../config';
@@ -24,6 +25,7 @@ export function Design() {
   const [range, setRange] = useState<DateRange>(() => esteMesRange());
   const [openModal, setOpenModal] = useState<ModalKind>(null);
   const [drill, setDrill] = useState<DrillKind>(null);
+  const [subAba, setSubAba] = useState<'metricas' | 'atribuir'>('metricas');
 
   const { eventos, loading, error, missingTable, lastUpdate } = useDesignEventos();
   const { dateSet: holidaySet } = useHolidays();
@@ -150,6 +152,28 @@ export function Design() {
 
   return (
     <div className="p-6 lg:p-8 flex flex-col gap-6 max-w-[1600px] mx-auto">
+      {/* Alternador de sub-aba (igual "Revisar dúvidas" em Programação) */}
+      <div className="flex items-center gap-1.5 bg-black/30 border border-burst-border rounded-lg p-1 self-start">
+        {(['metricas', 'atribuir'] as const).map((k) => (
+          <button
+            key={k}
+            onClick={() => setSubAba(k)}
+            className={[
+              'px-4 py-1.5 rounded text-xs font-semibold transition-colors',
+              subAba === k
+                ? 'bg-burst-orange/20 text-burst-orange-bright'
+                : 'text-burst-muted hover:bg-white/5 hover:text-white',
+            ].join(' ')}
+          >
+            {k === 'metricas' ? 'Métricas' : 'Atribuir métricas'}
+          </button>
+        ))}
+      </div>
+
+      {subAba === 'atribuir' ? (
+        <AtribuirMetricas eventos={eventosVisiveis} />
+      ) : (
+      <>
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="text-xs text-burst-muted">
           <span className="text-white font-semibold">{eventos.length}</span> evento(s) no banco •{' '}
@@ -255,6 +279,8 @@ export function Design() {
       >
         <EventosTable eventos={drillEventos} />
       </Modal>
+      </>
+      )}
     </div>
   );
 }

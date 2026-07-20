@@ -106,6 +106,27 @@ export function Programacao() {
     [summary.activeLeads]
   );
 
+  // === GUARDA DE ACESSO (defesa em profundidade) ===
+  // Programação é exclusiva de programador + admin/super. CS, gestor, designer
+  // e qualquer outro papel NÃO podem ver bônus/taxa/performance dos doutores.
+  // Sidebar e App.tsx já bloqueiam; este guard protege o componente caso seja
+  // montado por outro caminho. Vem DEPOIS dos hooks (regra dos hooks).
+  if (!hasFullAccess(user) && user.role !== 'programador') {
+    return (
+      <div className="p-8">
+        <div className="rounded-2xl border border-burst-border bg-burst-card p-8 max-w-xl">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="text-burst-orange-bright" size={20} />
+            <h2 className="font-display text-2xl text-white tracking-wider">Acesso restrito</h2>
+          </div>
+          <p className="text-burst-muted text-sm">
+            Esta aba é exclusiva da equipe de Programação. Use a aba do seu setor.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (configMissing.length > 0) {
     return (
       <div className="p-8">
