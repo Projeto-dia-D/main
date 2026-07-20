@@ -12,6 +12,7 @@ import { assertConfig, assertGestorConfig } from '../../config';
 import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
 import { Modal } from '../Modal';
 import { PainelGeralCs } from '../cs/PainelGeralCs';
+import { ChurnCard } from '../ChurnCard';
 import { PainelMiniCs } from '../cs/PainelMiniCs';
 import { CsesTable } from '../cs/CsesTable';
 import { PerfilPessoalCs } from '../cs/PerfilPessoalCs';
@@ -338,6 +339,8 @@ export function CS() {
                 onOpenClientes={() => setOpenModal('clientes')}
                 onOpenCses={() => setOpenModal('cses')}
               />
+
+              <ChurnCard clientsAll={mondayClientsAll} range={range} />
 
               {/* === RANKING COMPACTO DOS CSs (cards horizontais com foto)
                   Estilo Apresentação — comparação rápida antes dos PainelMini.

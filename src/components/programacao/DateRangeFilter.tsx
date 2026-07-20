@@ -26,30 +26,41 @@ function ontemRange(): DateRange {
   return { start, end };
 }
 
-// Período Dia D: ciclo de faturamento que começa no dia 12 de cada mês, até hoje.
-// (mês 0-indexado em Date: maio = 4, mas usamos getMonth() pra acompanhar o mês atual)
-//
-// IMPORTANTE: se hoje ainda NÃO chegou no dia 12, o ciclo corrente começou no
-// dia 12 do mês ANTERIOR. Sem esse ajuste, nos dias 1–11 o `start` (dia 12 do
-// mês atual) cai NO FUTURO em relação ao `end` (hoje) → range invertido → leads
-// e spend vêm vazios em todas as abas (e a Meta retorna 400 com since no futuro).
-//
-// Exportada pra que outras abas (Gestor / CS) possam usar como filtro inicial.
+// === "Mês de faturamento" (Dia D mensal, a partir de jul/2026) ===
+// O Dia D passou a ser MENSAL. O início do mês de faturamento é o dia 1 —
+// EXCETO julho/2026, que começa no dia 12 (transição do antigo ciclo dia-12
+// pro mensal). De agosto em diante começa no dia 1 normalmente.
+export function billingMonthStart(year: number, month: number): Date {
+  const dia = year === 2026 && month === 6 ? 12 : 1; // month 0-indexado: junho=5, julho=6
+  return new Date(year, month, dia, 0, 0, 0, 0);
+}
+
+// Fim do mês (último dia às 23:59:59.999). `new Date(y, m+1, 0)` = último dia do mês m.
+export function billingMonthEnd(year: number, month: number): Date {
+  return new Date(year, month + 1, 0, 23, 59, 59, 999);
+}
+
+// Período Dia D: do início do mês de faturamento corrente até HOJE.
+// Julho/2026 → 12/07 até hoje; agosto em diante → dia 1 até hoje.
+// Exportada pra que outras abas (Gestor / CS / Programação) usem como filtro inicial.
 export function diaDRange(): DateRange {
   const now = new Date();
-  let monthOffset = now.getDate() < 12 ? -1 : 0;
-  // EXCEÇÃO JUNHO/2026 (pedido em 12/06): a virada do ciclo deste mês foi
-  // adiada pro dia 15. Até 14/06 o "Dia D" continua mostrando o ciclo
-  // anterior (12/05 → hoje). NADA é apagado: em 15/06 o filtro passa a
-  // mostrar o ciclo novo (12/06 → hoje), já incluindo os dias 12-14/06.
-  // Este bloco auto-expira em 15/06/2026 — pode ser removido depois.
-  if (now.getFullYear() === 2026 && now.getMonth() === 5 && now.getDate() >= 12 && now.getDate() <= 14) {
-    monthOffset = -1;
-  }
-  const start = new Date(now.getFullYear(), now.getMonth() + monthOffset, 12, 0, 0, 0, 0);
+  const start = billingMonthStart(now.getFullYear(), now.getMonth());
   const end = new Date();
   end.setHours(23, 59, 59, 999);
   return { start, end };
+}
+
+// Expande um range pra MÊS(ES) INTEIRO(S) de faturamento: início → começo do mês
+// do `start`; fim → fim do mês do `end`. Aplicado nas seleções de calendário
+// (personalizado) — assim, escolher datas dentro de 1 mês puxa o mês inteiro, e
+// datas que cruzam 2 meses puxam os dois meses inteiros. Vale pra TODAS as
+// métricas (leads, spend, transferência, atraso, churn).
+export function expandRangeToBillingMonths(range: DateRange): DateRange {
+  return {
+    start: range.start ? billingMonthStart(range.start.getFullYear(), range.start.getMonth()) : null,
+    end: range.end ? billingMonthEnd(range.end.getFullYear(), range.end.getMonth()) : null,
+  };
 }
 
 // Este mês — do dia 1 do mês corrente até hoje.
@@ -80,6 +91,18 @@ const PRESETS: Preset[] = [
 
 export function DateRangeFilter({ range, onChange }: Props) {
   const [open, setOpen] = useState(false);
+
+  // Seleção personalizada (calendário/digitação) → expande pro(s) mês(es)
+  // inteiro(s) de faturamento. Os atalhos curtos (Hoje/Ontem/N dias) NÃO passam
+  // por aqui, então continuam literais. Se o usuário inverter (início > fim),
+  // troca os dois antes de expandir pra não gerar um range vazio.
+  const commitCustom = (r: DateRange) => {
+    let normalized = r;
+    if (r.start && r.end && r.start.getTime() > r.end.getTime()) {
+      normalized = { start: r.end, end: r.start };
+    }
+    onChange(expandRangeToBillingMonths(normalized));
+  };
 
   const label = (() => {
     if (!range.start && !range.end) return 'Todo o período';
@@ -147,7 +170,7 @@ export function DateRangeFilter({ range, onChange }: Props) {
                 <span className="text-[10px] uppercase text-burst-muted">Início</span>
                 <DatePicker
                   value={range.start}
-                  onChange={(d) => onChange({ ...range, start: d })}
+                  onChange={(d) => commitCustom({ ...range, start: d })}
                 />
               </div>
               <div className="flex flex-col gap-1">
@@ -155,7 +178,7 @@ export function DateRangeFilter({ range, onChange }: Props) {
                 <DatePicker
                   value={range.end}
                   endOfDay
-                  onChange={(d) => onChange({ ...range, end: d })}
+                  onChange={(d) => commitCustom({ ...range, end: d })}
                 />
               </div>
             </div>

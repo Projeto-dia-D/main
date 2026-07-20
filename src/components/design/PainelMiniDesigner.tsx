@@ -1,7 +1,7 @@
-import { Palette, CheckCircle2, RefreshCw, Zap, Stethoscope } from 'lucide-react';
+import { Palette, CheckCircle2, RefreshCw, Zap, Stethoscope, Clock } from 'lucide-react';
 import { AnimatedNumber } from '../AnimatedNumber';
 import {
-  pctManutColors,
+  halfTierColor,
   tierColor,
   formatBonusTotal,
 } from '../../lib/designMetrics';
@@ -25,9 +25,10 @@ export function PainelMiniDesigner({
   onClickFeitas,
   onClickManutencoes,
 }: Props) {
-  const colorsManut = pctManutColors(designer.pctManutencao);
-  const colorsDem = tierColor(designer.tierDemandas);
-  // bonusTotal agora é 0 | 0.5 | 1 (Math.min dos tiers) — vence o menor.
+  // Cores pela FAIXA paga (não pelo % arredondado) — cor sempre bate com o bônus.
+  const colorsManut = halfTierColor(designer.tierManutencao);
+  const colorsAtraso = halfTierColor(designer.tierAtraso);
+  // bonusTotal agora é a SOMA de atraso + manutenção (0 | 0,25 | 0,5 | 0,75 | 1).
   const colorsBonus = tierColor(designer.bonusTotal);
   const { lookup: lookupPhoto } = useUserPhotos();
   const photoUrl = lookupPhoto(designer.nome);
@@ -98,18 +99,20 @@ export function PainelMiniDesigner({
       </div>
 
       <div className="grid grid-cols-2 gap-2 mb-3 relative">
-        {/* DEMANDAS/DIA — clicável: abre lista de Feitas */}
+        {/* ATRASO % — métrica pontuada principal (jul/2026+) */}
         <ClickableStat
-          onClick={clickFeitas}
-          title="Ver demandas feitas"
-          className={`border ${colorsDem.border} ${colorsDem.bg}`}
+          title="Demandas que atrasaram ÷ demandas feitas"
+          className={`border ${colorsAtraso.border} ${colorsAtraso.bg}`}
         >
           <div className="text-[9px] uppercase tracking-wider text-burst-muted flex items-center gap-1">
-            <Zap size={10} /> Demandas/dia
+            <Clock size={10} /> % Atraso
           </div>
-          <div className={`font-display text-2xl ${colorsDem.text}`}>
-            {designer.demandasPorDia.toFixed(1)}
+          <div className={`font-display text-2xl ${colorsAtraso.text}`}>
+            {designer.atrasoPct.toFixed(1)}%
           </div>
+          <span className="text-[9px] text-burst-muted">
+            {designer.atrasadasNoPeriodo}/{designer.feitasNoAtraso} atrasadas
+          </span>
         </ClickableStat>
 
         {/* TAX APROV (% manutenção) — clicável: abre lista de Manutenções */}
@@ -141,6 +144,9 @@ export function PainelMiniDesigner({
             className="font-display text-base text-burst-orange-bright"
           />
           <span className="text-[9px] text-burst-muted">{designer.feitasUnicas} únicas</span>
+          <span className="text-[9px] text-burst-muted/70 flex items-center gap-0.5">
+            <Zap size={9} /> {designer.demandasPorDia.toFixed(1)}/dia
+          </span>
         </ClickableStat>
         <ClickableStat
           onClick={clickManutencoes}

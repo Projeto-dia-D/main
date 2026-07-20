@@ -21,6 +21,7 @@ import { assertConfig, assertGestorConfig } from '../../config';
 import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
 import { Modal } from '../Modal';
 import { PainelGeralGestor } from '../gestor/PainelGeralGestor';
+import { ChurnCard } from '../ChurnCard';
 import { PainelMiniGestor } from '../gestor/PainelMiniGestor';
 import { PerfilPessoalGestor } from '../gestor/PerfilPessoalGestor';
 import { ClientesTable } from '../gestor/ClientesTable';
@@ -518,6 +519,8 @@ ALTER TABLE public.client_meta_links DISABLE ROW LEVEL SECURITY;`}
                 onOpenCampanhas={() => setOpenModal('campanhas')}
                 onOpenGestores={() => setOpenModal('gestores')}
               />
+
+              <ChurnCard clientsAll={mondayClientsAll} range={range} />
 
               {/* === RANKING COMPACTO DOS GESTORES (cards horizontais com foto)
                   Estilo Apresentação — comparação rápida antes dos PainelMini.

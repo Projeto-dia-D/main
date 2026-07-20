@@ -91,7 +91,7 @@ export function ClientesMiniList({ clients, onClickCliente, title = 'Todos os cl
 
 function cptColorClass(cpt: number | null): string {
   if (cpt === null) return 'text-burst-muted';
-  if (cpt < 120) return 'text-green-400';
-  if (cpt <= 170) return 'text-burst-orange-bright';
+  if (cpt <= 70) return 'text-green-400';
+  if (cpt <= 100) return 'text-burst-orange-bright';
   return 'text-red-400';
 }

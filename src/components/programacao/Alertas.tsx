@@ -183,8 +183,8 @@ export function Alertas({ summary, range }: Props) {
     const ativoDias = activeDaysInRange(
       biaTimelineByClientId.get(client.id),
       biaFaseByClientId.get(client.id),
-      range.start,
-      range.end,
+      range.start ?? new Date(0),
+      range.end ?? new Date(),
     );
     if (ativoDias <= MIN_DIAS_BIA_ATIVA) return { valido: false, cs };
     return { valido: true, cs };

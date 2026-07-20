@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
 import { Palette, AlertTriangle, Database } from 'lucide-react';
 import { useDesignEventos } from '../../hooks/useDesignEventos';
+import { useDesignAtrasos } from '../../hooks/useDesignAtrasos';
 import { useHolidays } from '../../hooks/useHolidays';
 import { useAtestados } from '../../hooks/useAtestados';
 import { computeDesignMetrics, type DesignerMetrics } from '../../lib/designMetrics';
 import type { DateRange } from '../../lib/metrics';
-import { DateRangeFilter, esteMesRange } from '../programacao/DateRangeFilter';
+import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
 import { Modal } from '../Modal';
 import { PainelGeralDesign } from '../design/PainelGeralDesign';
 import { PainelMiniDesigner } from '../design/PainelMiniDesigner';
@@ -22,12 +23,13 @@ type DrillKind = { designer: string; type: 'feitas' | 'manutencoes' } | null;
 
 export function Design() {
   const user = useUser();
-  const [range, setRange] = useState<DateRange>(() => esteMesRange());
+  const [range, setRange] = useState<DateRange>(() => diaDRange());
   const [openModal, setOpenModal] = useState<ModalKind>(null);
   const [drill, setDrill] = useState<DrillKind>(null);
   const [subAba, setSubAba] = useState<'metricas' | 'atribuir'>('metricas');
 
   const { eventos, loading, error, missingTable, lastUpdate } = useDesignEventos();
+  const { atrasos } = useDesignAtrasos();
   const { dateSet: holidaySet } = useHolidays();
   const { atestados } = useAtestados();
 
@@ -55,8 +57,8 @@ export function Design() {
   }, [eventos, user]);
 
   const summary = useMemo(
-    () => computeDesignMetrics(eventosVisiveis, range, holidaySet, atestados),
-    [eventosVisiveis, range, holidaySet, atestados]
+    () => computeDesignMetrics(eventosVisiveis, range, holidaySet, atestados, atrasos),
+    [eventosVisiveis, range, holidaySet, atestados, atrasos]
   );
 
   // === SUMMARY GERAL (sem scope filter) — pra ranking comparativo do time ===
@@ -64,8 +66,8 @@ export function Design() {
   // precisa mostrar TODOS os designers (pra ele saber onde se encaixa em
   // produtividade/qualidade no time).
   const summaryGeral = useMemo(
-    () => computeDesignMetrics(eventos, range, holidaySet, atestados),
-    [eventos, range, holidaySet, atestados]
+    () => computeDesignMetrics(eventos, range, holidaySet, atestados, atrasos),
+    [eventos, range, holidaySet, atestados, atrasos]
   );
 
   // === GUARD ===

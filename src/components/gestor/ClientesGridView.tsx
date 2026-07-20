@@ -39,7 +39,7 @@ function norm(s: string): string {
  *  - Ativos no Dia D: esteve ativo em ALGUM momento do período (teve spend
  *    ou mensagens — pega quem rodou parte do mês mesmo se virou manutenção)
  *  - Melhores: top performers (transf > 0, ordenado por CPT)
- *  - Piores: pior performance — gastou mas (0 transf OU CPT > 170).
+ *  - Piores: pior performance — gastou mas (0 transf OU CPT > 100).
  *           Bate com a logica do "Piores" do PainelMini de gestor/cs.
  *  - Problemas: subset de "Piores" — so 0 transf (dinheiro 100% queimado).
  *              Mantido como filtro mais restritivo.
@@ -68,7 +68,7 @@ export function ClientesGridView({ clients, onClickClient }: Props) {
   // Predicado "piores" — bate com a logica do rankClients dos PainelMini
   // (gestor.tsx e cs.tsx): gastou mas (0 transf OU CPT alto), excluindo CRC.
   const isPior = (c: ClientMetrics) =>
-    !c.inactive && c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 170) && !isCrcAtendendo(c);
+    !c.inactive && c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 100) && !isCrcAtendendo(c);
 
   const counts = useMemo(() => {
     const ativosAgora = clients.filter((c) => !c.inactive);
@@ -215,7 +215,7 @@ function ClienteCard({ cm, onClick }: { cm: ClientMetrics; onClick?: () => void 
     statusBadge = { label: 'crc atendeu', cls: 'bg-blue-500/15 text-blue-300 border-blue-500/40' };
   } else if (cm.spend > 0 && cm.transferencias === 0) {
     statusBadge = { label: 'queimando', cls: 'bg-red-500/15 text-red-400 border-red-500/40' };
-  } else if (cm.transferencias > 0 && cm.cpt !== null && cm.cpt < 120) {
+  } else if (cm.transferencias > 0 && cm.cpt !== null && cm.cpt <= 70) {
     statusBadge = { label: 'top', cls: 'bg-green-500/15 text-green-400 border-green-500/40' };
   }
 
@@ -234,10 +234,10 @@ function ClienteCard({ cm, onClick }: { cm: ClientMetrics; onClick?: () => void 
   } else if (cm.spend > 0 && cm.transferencias === 0) {
     borderCls = 'border-red-500/50';
     glowCls = 'shadow-[0_0_20px_rgba(239,68,68,0.15)]';
-  } else if (cm.transferencias > 0 && cm.cpt !== null && cm.cpt < 120) {
+  } else if (cm.transferencias > 0 && cm.cpt !== null && cm.cpt <= 70) {
     borderCls = 'border-green-500/50';
     glowCls = 'shadow-[0_0_20px_rgba(34,197,94,0.15)]';
-  } else if (cm.transferencias > 0 && cm.cpt !== null && cm.cpt <= 170) {
+  } else if (cm.transferencias > 0 && cm.cpt !== null && cm.cpt <= 100) {
     borderCls = 'border-burst-orange/40';
   }
 

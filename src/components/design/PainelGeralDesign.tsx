@@ -1,11 +1,13 @@
-import { Palette, CheckCircle2, RefreshCw, Users, Clock, ChevronRight, Zap, Trophy, type LucideIcon } from 'lucide-react';
+import { Palette, CheckCircle2, RefreshCw, Users, Clock, ChevronRight, Zap, Trophy, AlarmClock, type LucideIcon } from 'lucide-react';
 import { AnimatedNumber } from '../AnimatedNumber';
 import {
-  pctManutColors,
   pctLabel,
+  atrasoLabel,
+  halfTierColor,
   tierColor,
   tierForDemandasDia,
   tierForPctManutencao,
+  tierForAtraso,
   tierLabel,
   formatBonusTotal,
 } from '../../lib/designMetrics';
@@ -32,8 +34,6 @@ function formatRelative(d: Date | null): string {
 }
 
 export function PainelGeralDesign({ summary, lastUpdate, onOpenFeitos, onOpenManutencoes, onOpenDesigners }: Props) {
-  const colorsManut = pctManutColors(summary.pctManutencao);
-
   // Entregas por dia POR DESIGNER (média) — mesma escala usada nos cards
   // individuais, pra que o tier (0 / 0,5 / 1) corresponda ao do designer.
   // Fórmula: total / dias úteis / qtd designers ativos
@@ -45,15 +45,22 @@ export function PainelGeralDesign({ summary, lastUpdate, onOpenFeitos, onOpenMan
     ? entregasDiaEquipe / designersCount
     : 0;
 
-  const tierDem = tierForDemandasDia(entregasDiaPorDesigner);
+  const tierDem = tierForDemandasDia(entregasDiaPorDesigner); // INFORMATIVO
   const colorsDem = tierColor(tierDem);
-  // tier de manutenção igual ao card do designer: só conta se há entregas
+  // tier de atraso (métrica pontuada principal) e de manutenção — só contam se
+  // há entregas no recorte de jul/2026+.
+  const tierAtraso: SalaryTier = summary.feitasAtrasoGeral > 0
+    ? tierForAtraso(summary.pctAtrasoGeral)
+    : 0;
   const tierMan: SalaryTier = summary.feitasUnicas > 0
     ? tierForPctManutencao(summary.pctManutencao)
     : 0;
+  // Cores pela FAIXA paga (não pelo % arredondado) — cor sempre bate com o bônus.
+  const colorsManut = halfTierColor(tierMan);
+  const colorsAtraso = halfTierColor(tierAtraso);
 
-  // BÔNUS DO PERÍODO — regra "vence o menor" (igual cada designer).
-  const tierGeral = (Math.min(tierDem, tierMan) as SalaryTier);
+  // BÔNUS DO PERÍODO — regra "somadas" (atraso + manutenção), teto de 1 salário.
+  const tierGeral = (Math.min(1, tierAtraso + tierMan) as SalaryTier);
   const colorsGeral = tierColor(tierGeral);
 
   return (
@@ -91,7 +98,7 @@ export function PainelGeralDesign({ summary, lastUpdate, onOpenFeitos, onOpenMan
               <Trophy size={28} className={colorsGeral.text} />
               <div>
                 <div className="text-[10px] uppercase tracking-[0.25em] text-burst-muted">
-                  Bônus do período (regra: vence o menor)
+                  Bônus do período (atraso + manutenção)
                 </div>
                 <div className={`font-display text-3xl tracking-wider ${colorsGeral.text}`}>
                   {formatBonusTotal(tierGeral)}
@@ -100,7 +107,7 @@ export function PainelGeralDesign({ summary, lastUpdate, onOpenFeitos, onOpenMan
             </div>
             <div className="text-[11px] text-burst-muted text-right">
               <div>
-                Demandas/dia: <span className={`font-bold ${colorsDem.text}`}>{tierLabel(tierDem)}</span>
+                % Atraso: <span className={`font-bold ${colorsAtraso.text}`}>{tierLabel(tierAtraso)}</span>
               </div>
               <div>
                 % Manutenção: <span className={`font-bold ${colorsManut.text}`}>{tierLabel(tierMan)}</span>
@@ -108,33 +115,39 @@ export function PainelGeralDesign({ summary, lastUpdate, onOpenFeitos, onOpenMan
             </div>
           </div>
 
-          {/* DUAS métricas lado a lado: ENTREGAS/DIA (destaque maior) + % MANUTENÇÃO */}
+          {/* DUAS métricas pontuadas lado a lado: % ATRASO (destaque maior) + % MANUTENÇÃO */}
           <div className="grid grid-cols-1 sm:grid-cols-[1.5fr_1fr] gap-4">
-            {/* ENTREGAS/DIA POR DESIGNER — PRINCIPAL (peso maior) */}
-            <div className={`rounded-xl border-2 ${colorsDem.border} ${colorsDem.bg} p-5 flex flex-col`}>
+            {/* % ATRASO — PRINCIPAL (métrica pontuada, jul/2026+) */}
+            <div className={`rounded-xl border-2 ${colorsAtraso.border} ${colorsAtraso.bg} p-5 flex flex-col`}>
               <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.25em] text-burst-muted">
-                <Zap size={12} className={colorsDem.text} /> Demandas/dia (média/designer)
+                <AlarmClock size={12} className={colorsAtraso.text} /> % Atraso (demandas atrasadas)
               </div>
               <div className="flex items-baseline gap-3 flex-wrap mt-1">
                 <AnimatedNumber
-                  value={entregasDiaPorDesigner}
+                  value={summary.pctAtrasoGeral}
                   decimals={1}
-                  className={`font-display text-[7rem] leading-none ${colorsDem.text} drop-shadow-[0_0_30px_rgba(34,197,94,0.25)]`}
+                  suffix="%"
+                  className={`font-display text-[7rem] leading-none ${colorsAtraso.text} drop-shadow-[0_0_30px_rgba(34,197,94,0.25)]`}
                 />
-                <div className={`px-3 py-1 rounded-md border ${colorsDem.border} ${colorsDem.bg}`}>
-                  <div className={`font-display text-xl tracking-wider ${colorsDem.text}`}>
-                    {tierLabel(tierDem)}
+                <div className={`px-3 py-1 rounded-md border ${colorsAtraso.border} ${colorsAtraso.bg}`}>
+                  <div className={`font-display text-xl tracking-wider ${colorsAtraso.text}`}>
+                    {tierLabel(tierAtraso)}
                   </div>
                 </div>
               </div>
               <div className="text-[11px] text-burst-muted mt-2">
-                <span className="text-white font-semibold">{summary.totalEventosFeito}</span> entregas
+                <span className="text-white font-semibold">{summary.atrasadasGeral}</span> atrasadas
                 {' ÷ '}
-                <span className="text-white font-semibold">{summary.diasNoPeriodo}</span> dia(s) úteis
-                {' ÷ '}
-                <span className="text-white font-semibold">{designersCount}</span> designer(s) ativo(s)
-                {' • equipe inteira: '}
-                <span className="text-white/85">{entregasDiaEquipe.toFixed(1)}/dia</span>
+                <span className="text-white font-semibold">{summary.feitasAtrasoGeral}</span> feitas (jul/2026+)
+                {' • '}
+                <span className={`font-bold ${colorsAtraso.text}`}>{atrasoLabel(summary.pctAtrasoGeral)}</span>
+              </div>
+              <div className="text-[11px] text-burst-muted/70 mt-1 flex items-center gap-1">
+                <Zap size={11} className={colorsDem.text} /> Demandas/dia (média/designer):
+                <span className="text-white/85">{entregasDiaPorDesigner.toFixed(1)}</span>
+                <span className="text-burst-muted/60">
+                  ({summary.totalEventosFeito} ÷ {summary.diasNoPeriodo} dia(s) ÷ {designersCount} designer(s) • equipe {entregasDiaEquipe.toFixed(1)}/dia)
+                </span>
               </div>
             </div>
 

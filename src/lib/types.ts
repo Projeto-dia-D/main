@@ -11,7 +11,12 @@ export interface RelatorioBias {
   nomeDoutor: string | null;
 }
 
-export type SalaryTier = 0 | 0.5 | 1;
+// Faixas de bônus (em frações de salário). 0,25 e 0,75 foram adicionados pra
+// suportar o Design a partir de jul/2026: manutenção passou a valer 0,5/0,25 e
+// atraso 0,5/0,25, e o bônus do designer é a SOMA dos dois (até 1 salário) —
+// então pode dar 0,25 / 0,5 / 0,75 / 1. As demais funções (gestor/CS/programação)
+// continuam usando só 0 | 0,5 | 1.
+export type SalaryTier = 0 | 0.25 | 0.5 | 0.75 | 1;
 
 export interface DoutorMetrics {
   nome: string;

@@ -56,7 +56,7 @@ export function ListasClientes({ clients, onClickCliente, totalLabelSuffix }: Pr
 
     // 2) Piores — gastou mas converteu mal. Exclui CRC e melhores.
     const piores = [...ativos]
-      .filter((c) => c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 170))
+      .filter((c) => c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 100))
       .filter((c) => !isCrcAtendendo(c))
       .filter((c) => !melhoresIds.has(c.client.id))
       .sort((a, b) => {

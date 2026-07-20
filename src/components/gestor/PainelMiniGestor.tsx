@@ -150,7 +150,7 @@ function rankClients(clients: ClientMetrics[]): {
     .slice(0, 3);
 
   const piores = [...ativos]
-    .filter((c) => c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 170))
+    .filter((c) => c.spend > 0 && (c.transferencias === 0 || (c.cpt ?? 0) > 100))
     // Tira clientes onde > 50% dos chats foram INTERROMPIDOS pela CRC do
     // cliente. "Chat interrompido" = a CRC pegou o atendimento manualmente
     // (a Bia foi interrompida). Nao da pra avaliar o funil da Bia nesse

@@ -4,7 +4,9 @@ interface Props {
   tier: SalaryTier;
 }
 
-const TIER_CONFIG: Record<SalaryTier, {
+// Programação usa só 0 / 0,5 / 1 (os tiers fracionados 0,25/0,75 são exclusivos
+// do Design). Por isso o config cobre só esses três buckets.
+const TIER_CONFIG: Record<0 | 0.5 | 1, {
   src: string;
   alt: string;
   borderColor: string;
@@ -47,7 +49,10 @@ const TIER_CONFIG: Record<SalaryTier, {
 };
 
 export function TierImage({ tier }: Props) {
-  const cfg = TIER_CONFIG[tier];
+  // Arredonda pro bucket mais próximo (0 / 0,5 / 1) por segurança de tipo —
+  // programação nunca gera 0,25/0,75, mas o tipo SalaryTier agora permite.
+  const bucket: 0 | 0.5 | 1 = tier >= 1 ? 1 : tier >= 0.5 ? 0.5 : 0;
+  const cfg = TIER_CONFIG[bucket];
 
   return (
     <div

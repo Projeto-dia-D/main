@@ -74,7 +74,7 @@ export function PerfilPessoalProgramador({
 
     const piores = [...elegiveis]
       .sort((a, b) => a.taxa - b.taxa || b.totalLeads - a.totalLeads)
-      .filter((d) => d.taxa < 16) // abaixo de 0,5 salário
+      .filter((d) => d.taxa < 20) // abaixo de 0,5 salário
       .slice(0, 5);
 
     return { melhores, piores };
@@ -212,11 +212,11 @@ export function PerfilPessoalProgramador({
         />
         <DoutoresPanel
           title="Doutores em alerta"
-          subtitle="Taxa abaixo de 16% — atenção redobrada"
+          subtitle="Taxa abaixo de 20% — atenção redobrada"
           icon={<AlertTriangle size={18} className="text-red-400" />}
           tone="danger"
           doutores={piores}
-          emptyMsg="Todos seus doutores estão acima de 16% 🎉"
+          emptyMsg="Todos seus doutores estão acima de 20% 🎉"
           onClickDoutor={onClickDoutor}
         />
       </div>

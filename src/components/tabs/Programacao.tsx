@@ -10,6 +10,7 @@ import {
   type DateRange,
 } from '../../lib/metrics';
 import { PainelGeral } from '../programacao/PainelGeral';
+import { ChurnCard } from '../ChurnCard';
 import { RankingDoutores } from '../programacao/RankingDoutores';
 import { Alertas } from '../programacao/Alertas';
 import { ChatsInterrompidos } from '../programacao/ChatsInterrompidos';
@@ -40,6 +41,7 @@ export function Programacao() {
   // cutoff funcione independente do filtro de Bia Soft.
   const {
     allClients: mondayClients,
+    clientsAll: mondayClientsAll,
     responsavelByName: responsavelByClient,
     responsaveis,
     biaTimelineByClientId,
@@ -316,6 +318,7 @@ export function Programacao() {
             onOpenTransferidos={() => setOpenModal('transferidos')}
             onOpenDoutores={() => setOpenModal('doutores')}
           />
+          <ChurnCard clientsAll={mondayClientsAll} range={range} />
           {summary.totalTransferidos > 0 && <TierImage tier={summary.tier} />}
           <RankingDoutores doutores={summary.doutores} />
           <Alertas summary={summary} range={range} />

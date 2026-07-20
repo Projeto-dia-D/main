@@ -142,14 +142,15 @@ export interface GestorSummary {
   totalOrfaosTransferencias: number;
 }
 
-// Faixas de custo por transferência (gestor)
-//   acima de 170 → 0 salário
-//   120 a 170    → 0,5 salário
-//   abaixo de 120 → 1 salário
+// Faixas de custo por transferência (gestor E CS — compartilham esta função)
+//   até R$70      → 1 salário
+//   R$70 a R$100  → 0,5 salário
+//   acima de R$100 → 0 (sem bônus)
+// Regra atualizada no Dia D de jul/2026 (antes era 120/170).
 export function tierForCpt(cpt: number | null): SalaryTier {
   if (cpt === null) return 0;
-  if (cpt < 120) return 1;
-  if (cpt <= 170) return 0.5;
+  if (cpt <= 70) return 1;
+  if (cpt <= 100) return 0.5;
   return 0;
 }
 
@@ -197,29 +198,29 @@ export function progressToNextTierCpt(cpt: number | null): {
   if (cpt === null) {
     return { nextLabel: 'sem dados ainda', pctOfBar: 0, remaining: 0 };
   }
-  // Quanto menor, melhor. Faixas: <120 (1s), 120-170 (0,5s), >170 (0s)
-  if (cpt < 120) {
+  // Quanto menor, melhor. Faixas: <=70 (1s), 70-100 (0,5s), >100 (0s)
+  if (cpt <= 70) {
     return { nextLabel: 'Faixa máxima atingida', pctOfBar: 100, remaining: 0 };
   }
-  if (cpt <= 170) {
-    // de 170 (limite inferior do tier laranja) até 120 (limite tier verde)
-    // pct = quão perto estamos de 120
-    const span = 170 - 120;
-    const progress = ((170 - cpt) / span) * 100;
+  if (cpt <= 100) {
+    // de 100 (limite superior do tier laranja) até 70 (limite tier verde)
+    // pct = quão perto estamos de 70
+    const span = 100 - 70;
+    const progress = ((100 - cpt) / span) * 100;
     return {
-      nextLabel: 'até 1 salário (<R$120)',
+      nextLabel: 'até 1 salário (≤R$70)',
       pctOfBar: Math.min(100, Math.max(0, progress)),
-      remaining: Number(Math.max(0, cpt - 119.99).toFixed(2)),
+      remaining: Number(Math.max(0, cpt - 70).toFixed(2)),
     };
   }
-  // acima de 170 — precisa baixar pra 170 pra entrar no laranja
-  // arbitrariamente assumo "topo" da escala em 300
-  const max = 300;
-  const progress = ((max - Math.min(cpt, max)) / (max - 170)) * 100;
+  // acima de 100 — precisa baixar pra 100 pra entrar no laranja
+  // arbitrariamente assumo "topo" da escala em 200
+  const max = 200;
+  const progress = ((max - Math.min(cpt, max)) / (max - 100)) * 100;
   return {
-    nextLabel: 'até 0,5 salário (≤R$170)',
+    nextLabel: 'até 0,5 salário (≤R$100)',
     pctOfBar: Math.min(100, Math.max(0, progress)),
-    remaining: Number(Math.max(0, cpt - 170).toFixed(2)),
+    remaining: Number(Math.max(0, cpt - 100).toFixed(2)),
   };
 }
 

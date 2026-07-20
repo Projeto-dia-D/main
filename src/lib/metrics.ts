@@ -189,9 +189,14 @@ export function resolveNomeDoutor(
   return DR_PREFIX_RE.test(instName) ? instName : null;
 }
 
+// Faixas de taxa de transferência (programação)
+//   acima de 24%   → 1 salário
+//   20% a 24%      → 0,5 salário
+//   abaixo de 20%  → 0 (sem bônus)
+// Regra atualizada no Dia D de jul/2026 (antes era 20%/16%).
 export function tierForTaxa(taxa: number): SalaryTier {
-  if (taxa >= 20) return 1;
-  if (taxa >= 16) return 0.5;
+  if (taxa > 24) return 1;
+  if (taxa >= 20) return 0.5;
   return 0;
 }
 
@@ -638,22 +643,22 @@ export function progressToNextTier(taxa: number): {
   pctOfBar: number;
   remaining: number;
 } {
-  if (taxa >= 20) {
+  if (taxa > 24) {
     return { nextLabel: 'Faixa máxima atingida', pctOfBar: 100, remaining: 0 };
   }
-  if (taxa >= 16) {
-    const span = 20 - 16;
-    const progress = ((taxa - 16) / span) * 100;
+  if (taxa >= 20) {
+    const span = 24 - 20;
+    const progress = ((taxa - 20) / span) * 100;
     return {
-      nextLabel: 'até 1 salário (≥20%)',
+      nextLabel: 'até 1 salário (>24%)',
       pctOfBar: Math.min(100, Math.max(0, progress)),
-      remaining: Number(Math.max(0, 20 - taxa).toFixed(1)),
+      remaining: Number(Math.max(0, 24 - taxa).toFixed(1)),
     };
   }
-  const progress = (taxa / 16) * 100;
+  const progress = (taxa / 20) * 100;
   return {
-    nextLabel: 'até 0,5 salário (16%)',
+    nextLabel: 'até 0,5 salário (20%)',
     pctOfBar: Math.min(100, Math.max(0, progress)),
-    remaining: Number(Math.max(0, 16 - taxa).toFixed(1)),
+    remaining: Number(Math.max(0, 20 - taxa).toFixed(1)),
   };
 }

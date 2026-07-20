@@ -3,6 +3,11 @@ import type { SalaryTier } from './types';
 import { countWorkingDays } from './holidays';
 import { primeiroDesignerAtivo, getDesignerInicio } from '../config';
 import { diasUteisAtestados, type Atestado } from './atestados';
+import type { DesignAtraso } from '../hooks/useDesignAtrasos';
+
+// A métrica de ATRASO só vale a partir de 01/07/2026 (Dia D de julho). Demandas
+// e atrasos anteriores a essa data não entram no cálculo de atraso%.
+const ATRASO_INICIO = new Date(2026, 6, 1, 0, 0, 0, 0);
 
 export interface DesignEvento {
   id: number;
@@ -54,11 +59,16 @@ export interface DesignerMetrics {
   totalEventosManutencao: number;
   totalEventosManutencaoC: number;
   pctManutencao: number; // (manutencoesUnicas / feitasUnicas) * 100
+  // === ATRASO (métrica pontuada principal a partir de jul/2026) ===
+  atrasoPct: number;               // (atrasadasNoPeriodo / feitasNoAtraso) * 100
+  atrasadasNoPeriodo: number;      // demandas do designer que atrasaram (board Atrasos), jul/2026+
+  feitasNoAtraso: number;          // demandas feitas únicas do designer, jul/2026+ (denominador do atraso)
+  tierAtraso: SalaryTier;          // 0 / 0.25 / 0.5 — baseado em atrasoPct
   // Métricas de bônus
-  demandasPorDia: number;          // feitasUnicas / diasNoPeriodo
-  tierDemandas: SalaryTier;        // 0 / 0.5 / 1 — baseado em demandasPorDia
-  tierManutencao: SalaryTier;      // 0 / 0.5 / 1 — baseado em pctManutencao
-  bonusTotal: SalaryTier;          // 0 / 0.5 / 1 — MENOR dos dois tiers (vence o pior)
+  demandasPorDia: number;          // feitasUnicas / diasNoPeriodo (INFORMATIVO — não pontua mais)
+  tierDemandas: SalaryTier;        // 0 / 0.5 / 1 — INFORMATIVO (baseado em demandasPorDia)
+  tierManutencao: SalaryTier;      // 0 / 0.25 / 0.5 — baseado em pctManutencao (payout reduzido)
+  bonusTotal: SalaryTier;          // SOMA de tierAtraso + tierManutencao (até 1 salário)
   // Dias úteis de atestado deste designer DENTRO do período (já subtraídos
   // de diasPorDia). 0 quando não houver atestado no período.
   diasAtestadoNoPeriodo: number;
@@ -74,6 +84,10 @@ export interface DesignSummary {
   totalEventosManutencao: number;
   totalEventosManutencaoC: number;
   pctManutencao: number;
+  // Atraso agregado do time (jul/2026+): atrasadas / feitas × 100
+  pctAtrasoGeral: number;
+  atrasadasGeral: number;
+  feitasAtrasoGeral: number;
   diasNoPeriodo: number;           // qtd de dias considerados no /dia
   designers: DesignerMetrics[];
   eventosSemDesigner: DesignEvento[];
@@ -85,28 +99,43 @@ export interface DesignSummary {
 // Faixas salariais (DISTRIBUIR PROSPERIDADE — Designer)
 // ============================================================
 
-// DEMANDAS/DIA: 12 ou mais → 1 salário; 8 a <12 → 0,5; abaixo de 8 → 0
+// DEMANDAS/DIA (INFORMATIVO a partir de jul/2026 — não pontua mais o bônus):
+// 12 ou mais → 1; 8 a <12 → 0,5; abaixo de 8 → 0. Mantido só pra exibição.
 export function tierForDemandasDia(perDia: number): SalaryTier {
   if (perDia >= 12) return 1;
   if (perDia >= 8) return 0.5;
   return 0;
 }
 
-// TAX APROV (% manutenção): acima de 19 → 0; >15 a 19 → 0,5; 15 ou menos → 1
+// MANUTENÇÃO (% manutenção) — payouts REDUZIDOS À METADE no Dia D de jul/2026
+// (faixas iguais, só o valor mudou): 15 ou menos → 0,5; >15 a 19 → 0,25; >19 → 0.
 export function tierForPctManutencao(pct: number): SalaryTier {
-  if (pct <= 15) return 1;
-  if (pct <= 19) return 0.5;
+  if (pct <= 15) return 0.5;
+  if (pct <= 19) return 0.25;
+  return 0;
+}
+
+// ATRASO (% atraso = demandas que atrasaram / demandas feitas × 100) — métrica
+// nova (jul/2026), substitui "demanda feita" como a métrica pontuada principal:
+// 7% ou menos → 0,5; >7 a 10% → 0,25; acima de 10% → 0.
+export function tierForAtraso(pct: number): SalaryTier {
+  if (pct <= 7) return 0.5;
+  if (pct <= 10) return 0.25;
   return 0;
 }
 
 export function tierLabel(t: SalaryTier): string {
   if (t === 1) return '1 SALÁRIO';
+  if (t === 0.75) return '0,75 SALÁRIO';
   if (t === 0.5) return '0,5 SALÁRIO';
+  if (t === 0.25) return '0,25 SALÁRIO';
   return 'SEM BÔNUS';
 }
 
+// Verde = bônus cheio (1); laranja = bônus parcial (0,25 / 0,5 / 0,75);
+// vermelho = sem bônus (0).
 export function tierColor(t: SalaryTier): { bg: string; text: string; border: string; glow: string } {
-  if (t === 1) {
+  if (t >= 1) {
     return {
       bg: 'bg-green-500/15',
       text: 'text-green-400',
@@ -114,7 +143,7 @@ export function tierColor(t: SalaryTier): { bg: string; text: string; border: st
       glow: 'shadow-[0_0_24px_rgba(34,197,94,0.35)]',
     };
   }
-  if (t === 0.5) {
+  if (t > 0) {
     return {
       bg: 'bg-burst-orange/15',
       text: 'text-burst-orange-bright',
@@ -130,9 +159,21 @@ export function tierColor(t: SalaryTier): { bg: string; text: string; border: st
   };
 }
 
+// Cor pela FAIXA (tier) de uma métrica que vale no máximo 0,5 (atraso e
+// manutenção): 0,5 = melhor faixa → verde; 0,25 → laranja; 0 → vermelho.
+// Colorir pelo tier (e não pelo % arredondado) garante que a cor bata EXATAMENTE
+// com o que é pago, mesmo nas bordas (7/10 e 15/19).
+export function halfTierColor(t: SalaryTier) {
+  if (t >= 0.5) return tierColor(1);   // verde
+  if (t >= 0.25) return tierColor(0.5); // laranja
+  return tierColor(0);                  // vermelho
+}
+
 export function formatBonusTotal(b: number): string {
   if (b === 0) return 'SEM BÔNUS';
+  if (b === 0.25) return '0,25 SALÁRIO';
   if (b === 0.5) return '0,5 SALÁRIO';
+  if (b === 0.75) return '0,75 SALÁRIO';
   if (b === 1) return '1 SALÁRIO';
   if (b === 1.5) return '1,5 SALÁRIO';
   if (b === 2) return '2 SALÁRIOS';
@@ -246,6 +287,27 @@ function eventoData(e: DesignEvento): Date {
   return new Date(e.imported_at);
 }
 
+/** Chave única de um atraso (uma demanda atrasada conta 1 vez, mesmo se o board
+ *  tiver linhas repetidas): monday_item_id > nome normalizado. */
+function atrasoKey(a: DesignAtraso): string {
+  if (a.monday_item_id) return `m:${a.monday_item_id}`;
+  const n = (a.nome || '').trim().toLowerCase();
+  return n ? `n:${n}` : `i:${a.monday_item_id ?? Math.random()}`;
+}
+
+/** Data de um atraso: log_criacao (quando entrou no board de Atrasos) >
+ *  cronograma_fim > cronograma_inicio. null se nada parseável. */
+function atrasoData(a: DesignAtraso): Date | null {
+  const parsed = parseLogCriacaoDate(a.log_criacao);
+  if (parsed) return parsed;
+  for (const c of [a.cronograma_fim, a.cronograma_inicio]) {
+    if (!c) continue;
+    const d = new Date(c);
+    if (!isNaN(d.getTime())) return d;
+  }
+  return null;
+}
+
 export function filterEventosByDate(
   eventos: DesignEvento[],
   range: DateRange
@@ -259,14 +321,32 @@ export function filterEventosByDate(
   });
 }
 
-// Cores por % de manutenção (delegando pro tier definido pela tabela DISTRIBUIR PROSPERIDADE)
+// Cores por % de manutenção — por QUALIDADE (faixas 15/19), independente do
+// valor do payout (que foi reduzido à metade). Verde ≤15, laranja ≤19, senão
+// vermelho — mantém a leitura visual de sempre mesmo com o tier valendo 0,5/0,25.
 export function pctManutColors(pct: number) {
-  return tierColor(tierForPctManutencao(pct));
+  if (pct <= 15) return tierColor(1);
+  if (pct <= 19) return tierColor(0.5);
+  return tierColor(0);
 }
 
 export function pctLabel(pct: number): string {
   if (pct <= 15) return 'EXCELENTE';
   if (pct <= 19) return 'ATENÇÃO';
+  return 'CRÍTICO';
+}
+
+// Cores por % de atraso — por QUALIDADE (faixas 7/10). Verde ≤7, laranja ≤10,
+// senão vermelho.
+export function atrasoColors(pct: number) {
+  if (pct <= 7) return tierColor(1);
+  if (pct <= 10) return tierColor(0.5);
+  return tierColor(0);
+}
+
+export function atrasoLabel(pct: number): string {
+  if (pct <= 7) return 'EM DIA';
+  if (pct <= 10) return 'ATENÇÃO';
   return 'CRÍTICO';
 }
 
@@ -334,30 +414,15 @@ export function computeDesignMetrics(
   eventos: DesignEvento[],
   range?: DateRange,
   holidaySet: Set<string> = new Set(),
-  atestados: Atestado[] = []
+  atestados: Atestado[] = [],
+  atrasos: DesignAtraso[] = []
 ): DesignSummary {
-  // === DESIGNER: o filtro "Dia D" NÃO conta o dia em curso ===
-  // SÓ no "Dia D" (ciclo do dia 12 até hoje) o dia atual é excluído: no início
-  // do dia o designer pode ter feito 1 demanda só, e contar o dia em curso
-  // derrubaria injustamente o "demandas/dia". Em "Hoje" e em QUALQUER outro
-  // filtro que inclua o dia atual, o dia aparece normalmente.
-  // Detecção do "Dia D": começa no dia 12 e termina hoje — e não é um range de
-  // um único dia (senão "Hoje" no próprio dia 12 seria confundido com Dia D).
-  const agora = new Date();
-  const mesmoDia = (a: Date, b: Date) =>
-    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-  const ehDiaD = !!(
-    range?.start && range?.end &&
-    range.start.getDate() === 12 &&
-    mesmoDia(range.end, agora) &&
-    !mesmoDia(range.start, agora)
-  );
-  let effRange = range;
-  if (ehDiaD && range) {
-    const fimOntem = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate(), 0, 0, 0, 0);
-    fimOntem.setMilliseconds(-1); // ontem 23:59:59.999
-    effRange = { start: range.start, end: fimOntem };
-  }
+  // Período de análise = exatamente o range selecionado (inclui o dia em curso).
+  // Antes o "Dia D" (ciclo dia-12) descontava o dia atual do "demandas/dia"; com
+  // o Dia D mensal e "demandas/dia" agora informativo (a métrica pontuada é o
+  // atraso), esse desconto foi removido — senão as demandas de hoje sumiriam da
+  // visão mensal inteira.
+  const effRange = range;
 
   // `filtered` é o set COMPLETO do período (inclui inativos) — usado pelos
   // totais globais e modais. Inativos só são removidos do agrupamento por
@@ -368,6 +433,29 @@ export function computeDesignMetrics(
 
   // Resolve as datas reais do período (pode ter sido inferido dos eventos)
   const { start: rangeStart, end: rangeEnd } = resolveRangeBounds(effRange, filtered);
+
+  // === ATRASOS (board "⌚ Atrasos do Design") ===
+  // Janela do atraso: o período selecionado, mas nunca antes de 01/07/2026 (a
+  // métrica começa no Dia D de julho). atrasoInicio = max(rangeStart, jul/2026).
+  const atrasoInicio = rangeStart.getTime() > ATRASO_INICIO.getTime() ? rangeStart : ATRASO_INICIO;
+  const atrasoInicioMs = atrasoInicio.getTime();
+  const atrasoFimMs = rangeEnd.getTime();
+  // Atrasos dentro da janela, agrupados pelo PRIMEIRO designer ativo (mesma
+  // regra dos eventos — combos "Felipe, Lais" vão pro Felipe).
+  const atrasosByDesigner = new Map<string, DesignAtraso[]>();
+  const atrasosNoPeriodo: DesignAtraso[] = [];
+  for (const a of atrasos) {
+    const d = atrasoData(a);
+    if (!d) continue;
+    const t = d.getTime();
+    if (t < atrasoInicioMs || t > atrasoFimMs) continue;
+    atrasosNoPeriodo.push(a);
+    const label = primeiroDesignerAtivo(a.designer);
+    if (!label) continue;
+    const arr = atrasosByDesigner.get(label) ?? [];
+    arr.push(a);
+    atrasosByDesigner.set(label, arr);
+  }
 
   // Agrupa por designer — só os ATIVOS aparecem como cards.
   // Eventos com designer mesclado (ex: "Felipe Moraes, Jean Carlos Tigre")
@@ -427,14 +515,40 @@ export function computeDesignMetrics(
     const diasAtestado = diasUteisAtestados(nome, atestados, inicio ?? rangeStart, rangeEnd, holidaySet);
     const diasDesigner = Math.max(1, diasBaseDesigner - diasAtestado);
     const perDia = feitos.length / diasDesigner;
-    const tDem = tierForDemandasDia(perDia);
+    const tDem = tierForDemandasDia(perDia); // INFORMATIVO — não entra no bônus
     // tier de manutenção só faz sentido se há entregas
     const tMan = feitos.length > 0 ? tierForPctManutencao(pct) : 0;
 
-    // Regra do bônus: SEMPRE VENCE O MENOR. Designer só recebe se BATER AS
-    // DUAS metas. Se bater 1 salário em demandas mas zerar manutenção, ganha 0.
-    // Se bateu 1 + 0.5, ganha 0.5. Se bateu 1 + 1, ganha 1.
-    const bonusFinal = (Math.min(tDem, tMan) as SalaryTier);
+    // === ATRASO (métrica pontuada principal, jul/2026+) ===
+    // Denominador = demandas feitas ÚNICAS do designer a partir de 01/07/2026.
+    // Numerador = demandas que atrasaram (board de Atrasos) no mesmo recorte.
+    // Uma demanda que atrasou E foi feita conta 1 no numerador e 1 no denominador.
+    // Piso do designer: se ele entrou no meio (getDesignerInicio), num E denom
+    // começam na entrada — o denominador já vem de `evs` (filtrado por inicio);
+    // o numerador aplica o mesmo piso aqui.
+    const atrasoFloorMs = inicio ? Math.max(atrasoInicioMs, inicio.getTime()) : atrasoInicioMs;
+    const feitosAtraso = feitos.filter((e) => eventoData(e).getTime() >= atrasoFloorMs);
+    const feitasNoAtraso = new Set(feitosAtraso.map(uniqueDemandaKey)).size;
+    const atrasadasNoPeriodo = new Set(
+      (atrasosByDesigner.get(nome) ?? [])
+        .filter((a) => {
+          const d = atrasoData(a);
+          return d != null && d.getTime() >= atrasoFloorMs;
+        })
+        .map(atrasoKey)
+    ).size;
+    // Clamp em 100%: numerador (board de Atrasos) e denominador (board de Feitas)
+    // vêm de boards diferentes (IDs distintos), então em raras divergências de
+    // borda a razão poderia passar de 100% — travamos pra não exibir >100%.
+    const atrasoPct = feitasNoAtraso > 0
+      ? Math.min(100, (atrasadasNoPeriodo / feitasNoAtraso) * 100)
+      : 0;
+    const tAtraso = feitasNoAtraso > 0 ? tierForAtraso(atrasoPct) : 0;
+
+    // Bônus do designer = SOMA de atraso + manutenção (regra "somadas" do Dia D
+    // de jul/2026). Cada uma vale até 0,5 → teto de 1 salário. Demanda/dia virou
+    // informativa (não pontua mais).
+    const bonusFinal = (Math.min(1, tAtraso + tMan) as SalaryTier);
 
     // Atestados que tocam o período pra exibir nos cards
     const nomeNorm = nome.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
@@ -455,6 +569,10 @@ export function computeDesignMetrics(
       totalEventosManutencao: manuts.length,
       totalEventosManutencaoC: manutsC.length,
       pctManutencao: Number(pct.toFixed(1)),
+      atrasoPct: Number(atrasoPct.toFixed(1)),
+      atrasadasNoPeriodo,
+      feitasNoAtraso,
+      tierAtraso: tAtraso,
       demandasPorDia: Number(perDia.toFixed(2)),
       tierDemandas: tDem,
       tierManutencao: tMan,
@@ -479,6 +597,15 @@ export function computeDesignMetrics(
   const manutencoesUnicas = new Set(allManutsContam.map(uniqueDemandaKey)).size;
   const pctGeral = allFeitos.length > 0 ? (allManutsContam.length / allFeitos.length) * 100 : 0;
 
+  // === ATRASO GERAL (time inteiro, jul/2026+) ===
+  const feitasAtrasoGeral = new Set(
+    allFeitos.filter((e) => eventoData(e).getTime() >= atrasoInicioMs).map(uniqueDemandaKey)
+  ).size;
+  const atrasadasGeral = new Set(atrasosNoPeriodo.map(atrasoKey)).size;
+  const pctAtrasoGeral = feitasAtrasoGeral > 0
+    ? Math.min(100, (atrasadasGeral / feitasAtrasoGeral) * 100)
+    : 0;
+
   return {
     feitasUnicas,
     manutencoesUnicas,
@@ -486,6 +613,9 @@ export function computeDesignMetrics(
     totalEventosManutencao: allManuts.length,
     totalEventosManutencaoC: allManutsC.length,
     pctManutencao: Number(pctGeral.toFixed(1)),
+    pctAtrasoGeral: Number(pctAtrasoGeral.toFixed(1)),
+    atrasadasGeral,
+    feitasAtrasoGeral,
     diasNoPeriodo: dias,
     designers,
     eventosSemDesigner: semDesigner,

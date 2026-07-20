@@ -7,6 +7,7 @@ import { useGoogleAdsSpend } from '../../hooks/useGoogleAdsSpend';
 import { useMetaLinks } from '../../hooks/useMetaLinks';
 import { useDoutorLinks } from '../../hooks/useDoutorLinks';
 import { useDesignEventos } from '../../hooks/useDesignEventos';
+import { useDesignAtrasos } from '../../hooks/useDesignAtrasos';
 import { useAtestados } from '../../hooks/useAtestados';
 import { useHolidays } from '../../hooks/useHolidays';
 import { useInstanceMap } from '../../hooks/useInstanceMap';
@@ -20,7 +21,7 @@ import {
 } from '../../lib/gestorMetrics';
 import { computeCsMetrics } from '../../lib/csMetrics';
 import {
-  computeDesignMetrics, tierForDemandasDia, tierForPctManutencao,
+  computeDesignMetrics, formatBonusTotal,
 } from '../../lib/designMetrics';
 import { computeMetrics, filterByDateRange, type DateRange } from '../../lib/metrics';
 import { diaDRange, DateRangeFilter } from '../programacao/DateRangeFilter';
@@ -69,6 +70,7 @@ export function Apresentacao() {
   const { links, byAccount: linksByAccount, byClient: linksByClient } = useMetaLinks();
   const { byClient: doutorLinksByClient } = useDoutorLinks();
   const { eventos: designEventos, lastUpdate: designLastUpdate } = useDesignEventos();
+  const { atrasos: designAtrasos } = useDesignAtrasos();
   const { atestados } = useAtestados();
   const { holidays } = useHolidays();
   const instanceMap = useInstanceMap();
@@ -120,8 +122,8 @@ export function Apresentacao() {
   );
 
   const designSummary = useMemo(
-    () => computeDesignMetrics(designEventos, range, holidaySet, atestados),
-    [designEventos, range, holidaySet, atestados],
+    () => computeDesignMetrics(designEventos, range, holidaySet, atestados, designAtrasos),
+    [designEventos, range, holidaySet, atestados, designAtrasos],
   );
 
   // Doutores destaque por programador: top 2 doutores com MELHOR TAXA entre
@@ -313,20 +315,19 @@ export function Apresentacao() {
             }
           >
             {[...designSummary.designers]
-              .sort((a, b) => b.demandasPorDia - a.demandasPorDia)
+              .sort((a, b) => b.bonusTotal - a.bonusTotal || a.atrasoPct - b.atrasoPct)
               .map((d) => {
-                const tDem = tierForDemandasDia(d.demandasPorDia);
-                const tMan = tierForPctManutencao(d.pctManutencao);
-                const tierGeral = Math.min(tDem, tMan) as SalaryTier;
+                // Bônus do designer = atraso + manutenção (já calculado no lib).
+                const tierGeral = d.bonusTotal;
                 return (
                   <PessoaCard
                     key={d.nome}
                     nome={d.nome}
                     photoUrl={lookupPhoto(d.nome)}
-                    metricaPrincipal={`${d.demandasPorDia.toFixed(1)}/d`}
-                    metricaLabel={`${d.pctManutencao.toFixed(0)}% manut`}
+                    metricaPrincipal={`${d.atrasoPct.toFixed(1)}%`}
+                    metricaLabel={`atraso · ${d.pctManutencao.toFixed(0)}% manut`}
                     tier={tierGeral}
-                    tierLabel={tierGeral === 1 ? '1 SALÁRIO' : tierGeral === 0.5 ? '0,5 SALÁRIO' : 'SEM BÔNUS'}
+                    tierLabel={formatBonusTotal(tierGeral)}
                   />
                 );
               })}
