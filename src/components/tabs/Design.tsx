@@ -4,6 +4,9 @@ import { useDesignEventos } from '../../hooks/useDesignEventos';
 import { useDesignAtrasos } from '../../hooks/useDesignAtrasos';
 import { useHolidays } from '../../hooks/useHolidays';
 import { useAtestados } from '../../hooks/useAtestados';
+import { useMondayClients } from '../../hooks/useMondayClients';
+import { useClientMetricControls } from '../../hooks/useClientMetricControls';
+import { nomesExcluidosNoSetor, nomeCasaExcluido } from '../../lib/clientMetricControl';
 import { computeDesignMetrics, type DesignerMetrics } from '../../lib/designMetrics';
 import type { DateRange } from '../../lib/metrics';
 import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
@@ -28,10 +31,28 @@ export function Design() {
   const [drill, setDrill] = useState<DrillKind>(null);
   const [subAba, setSubAba] = useState<'metricas' | 'atribuir'>('metricas');
 
-  const { eventos, loading, error, missingTable, lastUpdate } = useDesignEventos();
+  const { eventos: eventosRaw, loading, error, missingTable, lastUpdate } = useDesignEventos();
   const { atrasos } = useDesignAtrasos();
   const { dateSet: holidaySet } = useHolidays();
   const { atestados } = useAtestados();
+  const { clientsAll, nameByClientId } = useMondayClients();
+  const { controlsList: metricControls } = useClientMetricControls();
+
+  // Controle de Clientes: remove eventos cujos clientes estão TODOS desligados
+  // no setor "design". Evento sem cliente identificado é mantido.
+  const designExcluidosNomes = useMemo(() => {
+    const mainNameById = new Map(clientsAll.map((c) => [c.id, c.name]));
+    return nomesExcluidosNoSetor(metricControls, 'design', [mainNameById, nameByClientId]);
+  }, [metricControls, clientsAll, nameByClientId]);
+
+  const eventos = useMemo(() => {
+    if (designExcluidosNomes.size === 0) return eventosRaw;
+    return eventosRaw.filter((e) => {
+      const partes = (e.clientes || '').split(/\s*,\s*/).map((s) => s.trim()).filter(Boolean);
+      if (partes.length === 0) return true; // sem cliente identificado → mantém
+      return !partes.every((p) => nomeCasaExcluido(p, designExcluidosNomes));
+    });
+  }, [eventosRaw, designExcluidosNomes]);
 
   // === SCOPE FILTER ===
   // Designer não-admin: ve so seus proprios eventos.

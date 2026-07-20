@@ -656,8 +656,11 @@ export function buildDoutoresSemLeads(opts: {
   doutoresExistentes: DoutorMetrics[];
   /** Se informado, só clientes desse responsável. */
   responsavel?: string | null;
+  /** monday_client_id desligados do setor "programacao" (Controle de Clientes)
+   *  — não geram card "0 leads". */
+  excludeClientIds?: Set<string>;
 }): DoutorMetrics[] {
-  const { biaActiveIds, responsavelByClientId, nameByClientId, doutoresExistentes, responsavel } = opts;
+  const { biaActiveIds, responsavelByClientId, nameByClientId, doutoresExistentes, responsavel, excludeClientIds } = opts;
   const existentes = doutoresExistentes.map((d) => normalize(d.nome)).filter(Boolean);
   const jaTemCard = (nome: string): boolean => {
     const n = normalize(nome);
@@ -667,6 +670,7 @@ export function buildDoutoresSemLeads(opts: {
   const out: DoutorMetrics[] = [];
   const vistos = new Set<string>();
   for (const cid of biaActiveIds) {
+    if (excludeClientIds?.has(cid)) continue;
     const resp = responsavelByClientId.get(cid);
     if (!resp) continue;
     if (responsavel && resp !== responsavel) continue;

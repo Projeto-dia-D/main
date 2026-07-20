@@ -2,6 +2,12 @@ import { useMemo, useState } from 'react';
 import { useLeads } from '../../hooks/useLeads';
 import { useInstanceMap } from '../../hooks/useInstanceMap';
 import { useMondayClients } from '../../hooks/useMondayClients';
+import { useClientMetricControls } from '../../hooks/useClientMetricControls';
+import {
+  idsExcluidosNoSetor,
+  nomesExcluidosNoSetor,
+  nomeCasaExcluido,
+} from '../../lib/clientMetricControl';
 import {
   computeMetrics,
   filterByDateRange,
@@ -51,6 +57,16 @@ export function Programacao() {
     biaTimelineByClientId,
     biaFaseByClientId,
   } = useMondayClients();
+  // Controle de Clientes: clientes desligados do setor "programacao".
+  const { controlsList: metricControls } = useClientMetricControls();
+  const programacaoExcluidosIds = useMemo(
+    () => idsExcluidosNoSetor(metricControls, 'programacao'),
+    [metricControls]
+  );
+  const programacaoExcluidosNomes = useMemo(() => {
+    const mainNameById = new Map(mondayClientsAll.map((c) => [c.id, c.name]));
+    return nomesExcluidosNoSetor(metricControls, 'programacao', [mainNameById, nameByClientId]);
+  }, [metricControls, mondayClientsAll, nameByClientId]);
 
   // Default: range "Dia D" (dia 12 do mes atual ate hoje) — igual ao das
   // outras abas (Apresentacao, Gestor, CS) pra os numeros baterem ao abrir.
@@ -86,13 +102,17 @@ export function Programacao() {
   const effectiveResponsavel = enforcedResponsavel ?? responsavelFiltro;
 
   const filteredLeads = useMemo(() => {
-    const byRange = filterByDateRange(leads, range);
+    let byRange = filterByDateRange(leads, range);
+    // Controle de Clientes: tira leads de clientes desligados na Programação.
+    if (programacaoExcluidosNomes.size > 0) {
+      byRange = byRange.filter((l) => !nomeCasaExcluido(l.nomeDoutor, programacaoExcluidosNomes));
+    }
     if (!effectiveResponsavel) return byRange;
     return byRange.filter((l) => {
       const r = getResponsavelForDoutor(l.nomeDoutor, responsavelByClient);
       return r === effectiveResponsavel;
     });
-  }, [leads, range, effectiveResponsavel, responsavelByClient]);
+  }, [leads, range, effectiveResponsavel, responsavelByClient, programacaoExcluidosNomes]);
 
   const summary = useMemo(
     () => computeMetrics(filteredLeads, range, instanceMap, mondayClients, biaTimelineByClientId, biaFaseByClientId),
@@ -110,8 +130,9 @@ export function Programacao() {
       nameByClientId,
       doutoresExistentes: summary.doutores,
       responsavel: effectiveResponsavel,
+      excludeClientIds: programacaoExcluidosIds,
     });
-  }, [effectiveResponsavel, biaActiveIds, responsavelByClientId, nameByClientId, summary.doutores]);
+  }, [effectiveResponsavel, biaActiveIds, responsavelByClientId, nameByClientId, summary.doutores, programacaoExcluidosIds]);
 
   // Lista completa (com leads + sem leads) — os "sem leads" vão pro fim.
   const doutoresComSemLeads = useMemo(
@@ -122,9 +143,12 @@ export function Programacao() {
   // Summary com TODOS os leads (sem filtro por responsável) — usado pela
   // visão pessoal pra calcular comparação vs média geral da agência.
   const fullSummary = useMemo(() => {
-    const all = filterByDateRange(leads, range);
+    let all = filterByDateRange(leads, range);
+    if (programacaoExcluidosNomes.size > 0) {
+      all = all.filter((l) => !nomeCasaExcluido(l.nomeDoutor, programacaoExcluidosNomes));
+    }
     return computeMetrics(all, range, instanceMap, mondayClients, biaTimelineByClientId, biaFaseByClientId);
-  }, [leads, range, instanceMap, mondayClients, biaTimelineByClientId, biaFaseByClientId]);
+  }, [leads, range, instanceMap, mondayClients, biaTimelineByClientId, biaFaseByClientId, programacaoExcluidosNomes]);
   // ATENÇÃO: os modais e listas devem usar `summary.activeLeads`, nunca
   // `filteredLeads`. activeLeads já tirou chats interrompidos e incompletos.
   const transferidos = useMemo(

@@ -4,6 +4,8 @@ import { useLeads } from '../../hooks/useLeads';
 import { useMetaSpend } from '../../hooks/useMetaSpend';
 import { useGoogleAdsSpend } from '../../hooks/useGoogleAdsSpend';
 import { useMondayClients } from '../../hooks/useMondayClients';
+import { useClientMetricControls } from '../../hooks/useClientMetricControls';
+import { idsExcluidosNoSetor } from '../../lib/clientMetricControl';
 import { useMetaLinks } from '../../hooks/useMetaLinks';
 import { useDoutorLinks } from '../../hooks/useDoutorLinks';
 import { useAdAccountsForGestor } from '../../hooks/useAdAccountsForGestor';
@@ -91,6 +93,12 @@ export function GestorTrafego() {
     loading: mondayLoading,
     error: mondayError,
   } = useMondayClients();
+  // Controle de Clientes: clientes desligados do setor "gestor" saem das métricas.
+  const { controlsList: metricControls } = useClientMetricControls();
+  const gestorExcluidos = useMemo(
+    () => idsExcluidosNoSetor(metricControls, 'gestor'),
+    [metricControls]
+  );
   const {
     links,
     byAccount: linksByAccount,
@@ -146,14 +154,18 @@ export function GestorTrafego() {
     // filtrado por grupo "Plano à vista" + tipo "Normal + Bia Soft". Clientes
     // de "Plano normal" tipo "Normal" (ex: Colnaghi) sumiam mesmo tendo
     // vínculo Meta salvo.
-    if (mondayClientsAll.length === 0) return mondayClients;
-    const idsAtivos = new Set(mondayClients.map((c) => c.id));
-    const idsComLink = new Set(links.map((l) => l.monday_client_id));
-    const extras = mondayClientsAll.filter(
-      (c) => idsComLink.has(c.id) && !idsAtivos.has(c.id)
-    );
-    return extras.length === 0 ? mondayClients : [...mondayClients, ...extras];
-  }, [mondayClients, mondayClientsAll, links]);
+    let base = mondayClients;
+    if (mondayClientsAll.length > 0) {
+      const idsAtivos = new Set(mondayClients.map((c) => c.id));
+      const idsComLink = new Set(links.map((l) => l.monday_client_id));
+      const extras = mondayClientsAll.filter(
+        (c) => idsComLink.has(c.id) && !idsAtivos.has(c.id)
+      );
+      if (extras.length > 0) base = [...mondayClients, ...extras];
+    }
+    // Controle de Clientes: tira quem está desligado no setor "gestor".
+    return gestorExcluidos.size === 0 ? base : base.filter((c) => !gestorExcluidos.has(c.id));
+  }, [mondayClients, mondayClientsAll, links, gestorExcluidos]);
 
   const fullSummary = useMemo(
     () =>

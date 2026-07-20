@@ -1,9 +1,9 @@
-import { Code2, Palette, Headphones, Megaphone, CalendarDays, Bell, HeartPulse, ChevronLeft, ChevronRight, LayoutDashboard, MessageSquareText, type LucideIcon } from 'lucide-react';
+import { Code2, Palette, Headphones, Megaphone, CalendarDays, Bell, HeartPulse, ChevronLeft, ChevronRight, LayoutDashboard, MessageSquareText, SlidersHorizontal, type LucideIcon } from 'lucide-react';
 import { BrandTitle } from './BrandTitle';
 import { useUser, hasFullAccess } from '../lib/userContext';
 import { useNotifications } from '../lib/notificationsContext';
 
-export type TabKey = 'programacao' | 'design' | 'cs' | 'gestor' | 'calendario' | 'saude' | 'apresentacao' | 'notificacoes' | 'anuncios';
+export type TabKey = 'programacao' | 'design' | 'cs' | 'gestor' | 'calendario' | 'saude' | 'apresentacao' | 'notificacoes' | 'anuncios' | 'controle';
 
 interface Props {
   active: TabKey;
@@ -21,6 +21,7 @@ const ITEMS: { key: TabKey; label: string; icon: LucideIcon }[] = [
   { key: 'calendario', label: 'Calendário', icon: CalendarDays },
   { key: 'saude', label: 'Saúde do Cliente', icon: HeartPulse },
   { key: 'anuncios', label: 'Anúncios', icon: MessageSquareText },
+  { key: 'controle', label: 'Controle de Clientes', icon: SlidersHorizontal },
   { key: 'notificacoes', label: 'Notificações', icon: Bell },
 ];
 
@@ -54,7 +55,7 @@ export function Sidebar({ active, onChange, collapsed, onToggleCollapsed }: Prop
   const notifCount = notifications.length;
   // Admin/super programador: tudo + notificações. Outros: tabs limitados.
   const visible = hasFullAccess(user)
-    ? new Set<TabKey>(['apresentacao', 'programacao', 'design', 'cs', 'gestor', 'calendario', 'saude', 'anuncios', 'notificacoes'])
+    ? new Set<TabKey>(['apresentacao', 'programacao', 'design', 'cs', 'gestor', 'calendario', 'saude', 'anuncios', 'controle', 'notificacoes'])
     : visibleTabsForRole(user.role);
   const items = ITEMS.filter((it) => visible.has(it.key));
   return (

@@ -4,6 +4,8 @@ import { useLeads } from '../../hooks/useLeads';
 import { useMetaSpend } from '../../hooks/useMetaSpend';
 import { useGoogleAdsSpend } from '../../hooks/useGoogleAdsSpend';
 import { useMondayClients } from '../../hooks/useMondayClients';
+import { useClientMetricControls } from '../../hooks/useClientMetricControls';
+import { idsExcluidosNoSetor } from '../../lib/clientMetricControl';
 import { useMetaLinks } from '../../hooks/useMetaLinks';
 import { useDoutorLinks } from '../../hooks/useDoutorLinks';
 import { filterByDateRange, isTransferido, type DateRange } from '../../lib/metrics';
@@ -71,6 +73,12 @@ export function CS() {
     loading: mondayLoading,
     error: mondayError,
   } = useMondayClients();
+  // Controle de Clientes: clientes desligados do setor "cs" saem das métricas.
+  const { controlsList: metricControls } = useClientMetricControls();
+  const csExcluidos = useMemo(
+    () => idsExcluidosNoSetor(metricControls, 'cs'),
+    [metricControls]
+  );
   const {
     links,
     byAccount: linksByAccount,
@@ -107,14 +115,18 @@ export function CS() {
   // vem filtrado por grupo/tipo) e clientes de "Plano normal" como a Colnaghi
   // sumiam mesmo tendo vínculo Meta salvo.
   const clientesParaMetricas = useMemo(() => {
-    if (mondayClientsAll.length === 0) return mondayClients;
-    const idsAtivos = new Set(mondayClients.map((c) => c.id));
-    const idsComLink = new Set(links.map((l) => l.monday_client_id));
-    const extras = mondayClientsAll.filter(
-      (c) => idsComLink.has(c.id) && !idsAtivos.has(c.id)
-    );
-    return extras.length === 0 ? mondayClients : [...mondayClients, ...extras];
-  }, [mondayClients, mondayClientsAll, links]);
+    let base = mondayClients;
+    if (mondayClientsAll.length > 0) {
+      const idsAtivos = new Set(mondayClients.map((c) => c.id));
+      const idsComLink = new Set(links.map((l) => l.monday_client_id));
+      const extras = mondayClientsAll.filter(
+        (c) => idsComLink.has(c.id) && !idsAtivos.has(c.id)
+      );
+      if (extras.length > 0) base = [...mondayClients, ...extras];
+    }
+    // Controle de Clientes: tira quem está desligado no setor "cs".
+    return csExcluidos.size === 0 ? base : base.filter((c) => !csExcluidos.has(c.id));
+  }, [mondayClients, mondayClientsAll, links, csExcluidos]);
 
   const fullSummary = useMemo(
     () =>

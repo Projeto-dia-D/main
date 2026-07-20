@@ -17,6 +17,7 @@ import { Notificacoes } from './components/tabs/Notificacoes';
 import { SaudeCliente } from './components/tabs/SaudeCliente';
 import { Apresentacao } from './components/tabs/Apresentacao';
 import { Anuncios } from './components/tabs/Anuncios';
+import { ControleClientes } from './components/tabs/ControleClientes';
 
 const TAB_TITLES: Record<TabKey, string> = {
   apresentacao: 'Apresentação',
@@ -27,6 +28,7 @@ const TAB_TITLES: Record<TabKey, string> = {
   calendario: 'Calendário',
   saude: 'Saúde do Cliente',
   anuncios: 'Anúncios',
+  controle: 'Controle de Clientes',
   notificacoes: 'Notificações',
 };
 
@@ -188,6 +190,7 @@ export default function App() {
             {active === 'saude' && <SaudeCliente />}
             {active === 'apresentacao' && <Apresentacao />}
             {active === 'anuncios' && <Anuncios />}
+            {active === 'controle' && hasFullAccess(user) && <ControleClientes />}
             {active === 'notificacoes' && <Notificacoes />}
           </div>
         </main>
