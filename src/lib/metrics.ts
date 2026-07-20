@@ -154,13 +154,18 @@ export function getResponsavelForDoutor(
   const target = normalize(doutorName);
   if (!target || responsavelByClient.size === 0) return null;
 
-  // exato
-  if (responsavelByClient.has(target)) return responsavelByClient.get(target)!;
-
-  // substring nos dois sentidos
+  // IMPORTANTE: as chaves de `responsavelByClient` vêm do board Bia Soft
+  // normalizadas com a normalize() de monday.ts, que MANTÉM hífen/underscore.
+  // Aqui o `target` usa a normalize() deste arquivo, que troca -/_ por espaço.
+  // Sem re-normalizar cada chave com a MESMA função, nomes com hífen (ex.:
+  // "Integra Instituto - Dra. Leyrianne e Dra. Ana Paula") NUNCA casam, mesmo
+  // sendo idênticos ao nomeDoutor do lead — o doutor sumia da visão do
+  // responsável. Re-normalizamos a chave aqui pra alinhar as duas.
   for (const [client, resp] of responsavelByClient) {
     if (!client) continue;
-    if (target.includes(client) || client.includes(target)) return resp;
+    const c = normalize(client);
+    if (!c) continue;
+    if (target === c || target.includes(c) || c.includes(target)) return resp;
   }
   return null;
 }
