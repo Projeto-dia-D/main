@@ -49,12 +49,12 @@ const TRANSFERENCIA_EXCLUSION_PATTERNS = [
 const DOUTORES_CHAT_INCOMPLETO = [
   'daiane feduk',
   'sorriso recife',
-  'vitaprime',           // VitaPrime Clínica Odontológica
-  'vita prime',          // variação com espaço
-  'vitta prime',         // grafia antiga com 2 T (mantém compat com dados existentes)
+  // 'vitaprime' / 'vita prime' / 'vitta prime' — REMOVIDOS em 20/07/2026 (a
+  //   pedido): VitaPrime volta a contar/aparecer normalmente.
   // 'mayara ventura' — REMOVIDA em 27/05/2026: passa a contar nas métricas
   //   (retroativo + futuro). Antes era excluída como "chat incompleto".
-  'clinica artis',       // Clínica Artis (Carolina Moura) — chats incompletos, fora da métrica
+  // 'clinica artis' — REMOVIDO em 20/07/2026 (a pedido): Clínica Artis
+  //   (Carolina Moura) volta a contar/aparecer normalmente.
 ];
 
 // Doutores totalmente desconsiderados — leads NÃO aparecem em nenhuma seção
@@ -65,7 +65,7 @@ const DOUTORES_DESCONSIDERADOS = [
   'cassiano veieira',    // grafia alternativa no UAZAPI
   'jadson lucas',
   'simone justo',
-  'idgm',                // IDGM - Cursos (Patrick e Gabriel Machado) — desconsiderado em todos os setores
+  // 'idgm' — REMOVIDO em 20/07/2026 (a pedido): IDGM - Cursos volta a contar/aparecer.
   'luxx sorriso',        // Luxx Sorriso — removido de Gestor/Programação/CS (a pedido)
 ];
 
@@ -641,6 +641,61 @@ export function computeMetrics(
     chatsIncompletos,
     activeLeads,
   };
+}
+
+/**
+ * Constrói cards "0 leads" pros clientes ATIVOS (I.A ativa) de um responsável
+ * que ainda NÃO tiveram nenhum lead no período — logo não aparecem em
+ * computeMetrics (que é movido por leads). Usa o nome do board Bia Soft (o mesmo
+ * que casa com o nomeDoutor dos leads) pra deduplicar contra quem já tem card.
+ */
+export function buildDoutoresSemLeads(opts: {
+  biaActiveIds: Set<string>;
+  responsavelByClientId: Map<string, string>;
+  nameByClientId: Map<string, string>;
+  doutoresExistentes: DoutorMetrics[];
+  /** Se informado, só clientes desse responsável. */
+  responsavel?: string | null;
+}): DoutorMetrics[] {
+  const { biaActiveIds, responsavelByClientId, nameByClientId, doutoresExistentes, responsavel } = opts;
+  const existentes = doutoresExistentes.map((d) => normalize(d.nome)).filter(Boolean);
+  const jaTemCard = (nome: string): boolean => {
+    const n = normalize(nome);
+    if (!n) return true;
+    return existentes.some((e) => e === n || e.includes(n) || n.includes(e));
+  };
+  const out: DoutorMetrics[] = [];
+  const vistos = new Set<string>();
+  for (const cid of biaActiveIds) {
+    const resp = responsavelByClientId.get(cid);
+    if (!resp) continue;
+    if (responsavel && resp !== responsavel) continue;
+    const nome = nameByClientId.get(cid);
+    if (!nome) continue;
+    // Respeita as exclusões de sempre (desconsiderados / chat incompleto).
+    if (isNomeChatIncompleto(nome)) continue;
+    if (jaTemCard(nome)) continue;
+    const key = normalize(nome);
+    if (vistos.has(key)) continue;
+    vistos.add(key);
+    out.push({
+      nome,
+      totalLeads: 0,
+      totalTransferidos: 0,
+      taxa: 0,
+      tier: 0,
+      ultimoLead: null,
+      ultimaTransferencia: null,
+      diasSemTransferencia: 9999,
+      biaAtivaMs: null,
+      status: 'SEM TRANSFERENCIA',
+      evolucao: [],
+      leads: [],
+      semLeads: true,
+    });
+  }
+  out.sort((a, b) => a.nome.localeCompare(b.nome));
+  return out;
 }
 
 export function progressToNextTier(taxa: number): {

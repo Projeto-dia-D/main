@@ -6,6 +6,7 @@ import {
   computeMetrics,
   filterByDateRange,
   getResponsavelForDoutor,
+  buildDoutoresSemLeads,
   isTransferido,
   type DateRange,
 } from '../../lib/metrics';
@@ -43,6 +44,9 @@ export function Programacao() {
     allClients: mondayClients,
     clientsAll: mondayClientsAll,
     responsavelByName: responsavelByClient,
+    responsavelByClientId,
+    biaActiveIds,
+    nameByClientId,
     responsaveis,
     biaTimelineByClientId,
     biaFaseByClientId,
@@ -93,6 +97,26 @@ export function Programacao() {
   const summary = useMemo(
     () => computeMetrics(filteredLeads, range, instanceMap, mondayClients, biaTimelineByClientId, biaFaseByClientId),
     [filteredLeads, range, instanceMap, mondayClients, biaTimelineByClientId, biaFaseByClientId]
+  );
+
+  // Clientes ATIVOS (I.A ativa) do responsável selecionado que NÃO tiveram lead
+  // no período → cards "0 leads". Só na visão de um responsável (o próprio
+  // programador logado ou um admin filtrando por alguém).
+  const clientesSemLeads = useMemo(() => {
+    if (!effectiveResponsavel) return [];
+    return buildDoutoresSemLeads({
+      biaActiveIds,
+      responsavelByClientId,
+      nameByClientId,
+      doutoresExistentes: summary.doutores,
+      responsavel: effectiveResponsavel,
+    });
+  }, [effectiveResponsavel, biaActiveIds, responsavelByClientId, nameByClientId, summary.doutores]);
+
+  // Lista completa (com leads + sem leads) — os "sem leads" vão pro fim.
+  const doutoresComSemLeads = useMemo(
+    () => [...summary.doutores, ...clientesSemLeads],
+    [summary.doutores, clientesSemLeads]
   );
 
   // Summary com TODOS os leads (sem filtro por responsável) — usado pela
@@ -291,7 +315,7 @@ export function Programacao() {
             onClickDoutores={() => setOpenModal('doutores')}
             onClickDoutor={(d) => setDrillDoutor(d.nome)}
           />
-          {summary.doutores.length === 0 && (
+          {doutoresComSemLeads.length === 0 ? (
             <div className="rounded-2xl border border-burst-warning/40 bg-burst-warning/5 p-8 text-center">
               <AlertTriangle className="text-burst-warning mx-auto mb-3" size={28} />
               <div className="text-white font-display text-xl mb-2">
@@ -302,6 +326,24 @@ export function Programacao() {
                 Ajuste o período ou veja os Chats Interrompidos/Incompletos abaixo.
               </p>
             </div>
+          ) : (
+            <section>
+              <div className="flex items-center gap-2 mb-4 flex-wrap">
+                <Users className="text-burst-orange-bright" size={20} />
+                <h3 className="font-display text-xl tracking-wider text-white">
+                  Seus doutores
+                </h3>
+                <span className="text-xs text-burst-muted">
+                  {doutoresComSemLeads.length} no total
+                  {clientesSemLeads.length > 0 && ` · ${clientesSemLeads.length} sem lead no período`}
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                {doutoresComSemLeads.map((d) => (
+                  <DoutorCard key={d.nome} doutor={d} />
+                ))}
+              </div>
+            </section>
           )}
           <ChatsInterrompidos leads={summary.chatsInterrompidos} />
           <ChatsIncompletos leads={summary.chatsIncompletos} />

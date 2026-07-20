@@ -40,8 +40,14 @@ function statusBadge(d: DoutorMetrics) {
 }
 
 export function DoutorCard({ doutor }: Props) {
-  const colors = tierColor(doutor.tier);
-  const badge = statusBadge(doutor);
+  // Cliente ativo sem lead no período: estado NEUTRO (não é performance ruim).
+  const semLeads = !!doutor.semLeads;
+  const colors = semLeads
+    ? { bg: 'bg-black/20', text: 'text-burst-muted', border: 'border-burst-border', glow: '' }
+    : tierColor(doutor.tier);
+  const badge = semLeads
+    ? { label: '0 LEADS NO PERÍODO', cls: 'bg-white/5 text-burst-muted border-burst-border', dot: 'bg-burst-muted' }
+    : statusBadge(doutor);
   const lineColor =
     doutor.tier === 1 ? '#22C55E' : doutor.tier === 0.5 ? '#FF8C00' : '#EF4444';
 
@@ -68,40 +74,53 @@ export function DoutorCard({ doutor }: Props) {
       </div>
 
       <div className="flex items-baseline gap-2">
-        <AnimatedNumber
-          value={doutor.taxa}
-          decimals={1}
-          suffix="%"
-          className={`font-display text-5xl leading-none ${colors.text}`}
-        />
-        <span className="text-xs text-burst-muted">taxa de transferência</span>
+        <span className={`font-display text-5xl leading-none ${colors.text}`}>
+          {semLeads ? '—' : null}
+        </span>
+        {!semLeads && (
+          <AnimatedNumber
+            value={doutor.taxa}
+            decimals={1}
+            suffix="%"
+            className={`font-display text-5xl leading-none ${colors.text}`}
+          />
+        )}
+        <span className="text-xs text-burst-muted">
+          {semLeads ? 'sem movimento no período' : 'taxa de transferência'}
+        </span>
       </div>
 
-      <div className="h-20 -mx-2">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={doutor.evolucao}>
-            <YAxis hide domain={[0, 'dataMax + 5']} />
-            <Tooltip
-              contentStyle={{
-                background: '#111',
-                border: '1px solid #1f1f1f',
-                borderRadius: 8,
-                fontSize: 12,
-              }}
-              labelStyle={{ color: '#9CA3AF' }}
-              formatter={(v: number) => [`${v}%`, 'taxa']}
-            />
-            <Line
-              type="monotone"
-              dataKey="taxa"
-              stroke={lineColor}
-              strokeWidth={2.5}
-              dot={false}
-              activeDot={{ r: 4 }}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      {semLeads ? (
+        <div className="h-20 -mx-2 flex items-center justify-center text-xs text-burst-muted/60">
+          Nenhum lead neste período — cliente ativo na programação
+        </div>
+      ) : (
+        <div className="h-20 -mx-2">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={doutor.evolucao}>
+              <YAxis hide domain={[0, 'dataMax + 5']} />
+              <Tooltip
+                contentStyle={{
+                  background: '#111',
+                  border: '1px solid #1f1f1f',
+                  borderRadius: 8,
+                  fontSize: 12,
+                }}
+                labelStyle={{ color: '#9CA3AF' }}
+                formatter={(v: number) => [`${v}%`, 'taxa']}
+              />
+              <Line
+                type="monotone"
+                dataKey="taxa"
+                stroke={lineColor}
+                strokeWidth={2.5}
+                dot={false}
+                activeDot={{ r: 4 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2 text-xs">
         <Stat label="Leads" value={doutor.totalLeads} icon={Activity} />

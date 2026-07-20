@@ -33,6 +33,10 @@ export interface DoutorMetrics {
   status: 'ATIVO' | 'SEM TRANSFERENCIA';
   evolucao: { date: string; taxa: number }[];
   leads: RelatorioBias[];
+  /** true = cliente ATIVO (I.A ativa) do responsável que NÃO teve nenhum lead no
+   *  período — card "0 leads / sem movimento". Não é performance ruim, é ausência
+   *  de dado. Fica fora de rankings/melhores/piores. */
+  semLeads?: boolean;
 }
 
 export interface MetricsSummary {

@@ -33,6 +33,9 @@ export interface UseMondayClientsResult {
   biaTimelineByClientId: Map<string, FaseTransition[]>;
   /** Map<monday_client_id, fase_atual> — fase atual da Bia no board Bia Soft. */
   biaFaseByClientId: Map<string, string>;
+  /** Map<monday_client_id, nome do item no Bia Soft> — nome que casa com o
+   *  nomeDoutor dos leads. Usado pra listar clientes ativos sem lead no período. */
+  nameByClientId: Map<string, string>;
   /** Map<monday_client_id (do Monday principal) → bia_item_id (no board Bia Soft)>.
    *  Usado pra montar link do item no Monday quando aparece evento de Bia. */
   biaItemIdByClientId: Map<string, string>;
@@ -69,6 +72,7 @@ interface CachedBia {
   activeIds: string[];
   responsavelByClientId: [string, string][];
   responsavelByName?: [string, string][];
+  nameByClientId?: [string, string][];
   responsaveis: string[];
   csByEmail?: [string, string][];
   gestorByEmail?: [string, string][];
@@ -116,6 +120,9 @@ export function useMondayClients(): UseMondayClientsResult {
   const [responsavelByName, setResponsavelByName] = useState<Map<string, string>>(initialRespByName);
   const [biaTimelineByClientId, setBiaTimelineByClientId] = useState<Map<string, FaseTransition[]>>(initialTimeline);
   const [biaFaseByClientId, setBiaFaseByClientId] = useState<Map<string, string>>(new Map());
+  const [nameByClientId, setNameByClientId] = useState<Map<string, string>>(
+    () => new Map<string, string>(cachedBia?.value.nameByClientId ?? [])
+  );
   const [biaItemIdByClientId, setBiaItemIdByClientId] = useState<Map<string, string>>(new Map());
   const [csByEmail, setCsByEmail] = useState<Map<string, string>>(
     () => new Map<string, string>(cachedBia?.value.csByEmail ?? [])
@@ -258,6 +265,7 @@ export function useMondayClients(): UseMondayClientsResult {
         if (biaHasData && biaData) {
           setBiaTimelineByClientId(timelineByClient);
           setBiaFaseByClientId(biaData.faseByClientId);
+          setNameByClientId(biaData.nameByClientId);
           // Inverte clientIdsByBiaItemId → biaItemIdByClientId (1 client pode
           // estar em múltiplos bia_items, raro; mantemos o primeiro).
           const biaItemByClient = new Map<string, string>();
@@ -288,6 +296,7 @@ export function useMondayClients(): UseMondayClientsResult {
             activeIds: Array.from(biaData.activeIds),
             responsavelByClientId: Array.from(biaData.responsavelByClientId.entries()),
             responsavelByName: Array.from(biaData.responsavelByName.entries()),
+            nameByClientId: Array.from(biaData.nameByClientId.entries()),
             responsaveis: biaData.responsaveis,
             csByEmail: Array.from(biaData.csByEmail.entries()),
             gestorByEmail: Array.from(biaData.gestorByEmail.entries()),
@@ -323,6 +332,7 @@ export function useMondayClients(): UseMondayClientsResult {
     responsavelByName,
     biaTimelineByClientId,
     biaFaseByClientId,
+    nameByClientId,
     biaItemIdByClientId,
     csByEmail,
     gestorByEmail,

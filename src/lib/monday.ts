@@ -690,6 +690,10 @@ export interface BiaSoftData {
   responsavelByClientId: Map<string, string>;
   /** Map<monday_client_id, fase atual>. */
   faseByClientId: Map<string, string>;
+  /** Map<monday_client_id, nome do item no board Bia Soft>. Esse nome é o que
+   *  casa com o `nomeDoutor` dos leads — usado pra listar clientes ativos que
+   *  ainda NÃO têm lead no período (cards "0 leads"). */
+  nameByClientId: Map<string, string>;
   /** Map<bia_item_id, monday_client_id[]> — bridge entre os 2 boards. */
   clientIdsByBiaItemId: Map<string, string[]>;
   /** Mantido por compat. */
@@ -718,6 +722,7 @@ async function fetchBiaSoftDataRaw(): Promise<BiaSoftData> {
   const responsavelByName = new Map<string, string>();
   const responsavelByClientId = new Map<string, string>();
   const faseByClientId = new Map<string, string>();
+  const nameByClientId = new Map<string, string>();
   const clientIdsByBiaItemId = new Map<string, string[]>();
   const responsaveisSet = new Set<string>();
   const csByEmail = new Map<string, string>();
@@ -727,7 +732,7 @@ async function fetchBiaSoftDataRaw(): Promise<BiaSoftData> {
     return {
       activeNames, allNames, activeIds, allIds,
       responsavelByName, responsavelByClientId,
-      faseByClientId, clientIdsByBiaItemId,
+      faseByClientId, nameByClientId, clientIdsByBiaItemId,
       responsaveis: [],
       csByEmail, gestorByEmail, programadorByEmail,
     };
@@ -760,6 +765,7 @@ async function fetchBiaSoftDataRaw(): Promise<BiaSoftData> {
       allIds.add(cid);
       if (isAtivo) activeIds.add(cid);
       if (fase) faseByClientId.set(cid, fase);
+      if (it.name?.trim()) nameByClientId.set(cid, it.name.trim());
     }
     const resp = extractResponsavel(it);
     if (resp) {
@@ -821,6 +827,7 @@ async function fetchBiaSoftDataRaw(): Promise<BiaSoftData> {
     responsavelByName,
     responsavelByClientId,
     faseByClientId,
+    nameByClientId,
     clientIdsByBiaItemId,
     responsaveis: Array.from(responsaveisSet).sort(),
     csByEmail,
