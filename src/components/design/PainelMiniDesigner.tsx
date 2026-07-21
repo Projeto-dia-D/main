@@ -17,6 +17,7 @@ interface Props {
   onClick?: () => void;
   onClickFeitas?: () => void;
   onClickManutencoes?: () => void;
+  onClickAtrasos?: () => void;
 }
 
 export function PainelMiniDesigner({
@@ -24,6 +25,7 @@ export function PainelMiniDesigner({
   onClick,
   onClickFeitas,
   onClickManutencoes,
+  onClickAtrasos,
 }: Props) {
   // Cores pela FAIXA paga (não pelo % arredondado) — cor sempre bate com o bônus.
   const colorsManut = halfTierColor(designer.tierManutencao);
@@ -44,6 +46,7 @@ export function PainelMiniDesigner({
   }
   const clickFeitas = makeHandler(onClickFeitas);
   const clickManutencoes = makeHandler(onClickManutencoes);
+  const clickAtrasos = makeHandler(onClickAtrasos);
 
   return (
     <section
@@ -99,9 +102,10 @@ export function PainelMiniDesigner({
       </div>
 
       <div className="grid grid-cols-2 gap-2 mb-3 relative">
-        {/* ATRASO % — métrica pontuada principal (jul/2026+) */}
+        {/* ATRASO % — métrica pontuada principal (jul/2026+) — clicável: abre lista */}
         <ClickableStat
-          title="Demandas que atrasaram ÷ demandas feitas"
+          onClick={clickAtrasos}
+          title="Ver demandas atrasadas (Status da tarefa = Atrasado)"
           className={`border ${colorsAtraso.border} ${colorsAtraso.bg}`}
         >
           <div className="text-[9px] uppercase tracking-wider text-burst-muted flex items-center gap-1">

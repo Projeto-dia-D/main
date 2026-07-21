@@ -6,7 +6,7 @@ import { useAtestados } from '../../hooks/useAtestados';
 import { useMondayClients } from '../../hooks/useMondayClients';
 import { useClientMetricControls } from '../../hooks/useClientMetricControls';
 import { nomesExcluidosNoSetor, nomeCasaExcluido } from '../../lib/clientMetricControl';
-import { computeDesignMetrics, type DesignerMetrics } from '../../lib/designMetrics';
+import { computeDesignMetrics, isStatusTarefaAtrasado, type DesignerMetrics } from '../../lib/designMetrics';
 import type { DateRange } from '../../lib/metrics';
 import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
 import { Modal } from '../Modal';
@@ -21,7 +21,7 @@ import { nameMatchesScope } from '../../lib/monday';
 import { primeiroDesignerAtivo } from '../../config';
 
 type ModalKind = 'feitos' | 'manutencoes' | 'designers' | 'sem-designer' | null;
-type DrillKind = { designer: string; type: 'feitas' | 'manutencoes' } | null;
+type DrillKind = { designer: string; type: 'feitas' | 'manutencoes' | 'atrasos' } | null;
 
 export function Design() {
   const user = useUser();
@@ -126,6 +126,7 @@ export function Design() {
   const drillEventos = useMemo(() => {
     if (!drillDesigner || !drill) return [];
     if (drill.type === 'feitas') return drillDesigner.eventos.filter((e) => e.tipo_evento === 'feito');
+    if (drill.type === 'atrasos') return drillDesigner.eventos.filter((e) => isStatusTarefaAtrasado(e.status_tarefa));
     return drillDesigner.eventos.filter((e) => e.tipo_evento === 'manutencao' || e.tipo_evento === 'manutencao_c');
   }, [drillDesigner, drill]);
 
@@ -220,6 +221,7 @@ export function Design() {
               designer={d}
               onClickFeitas={() => setDrill({ designer: d.nome, type: 'feitas' })}
               onClickManutencoes={() => setDrill({ designer: d.nome, type: 'manutencoes' })}
+              onClickAtrasos={() => setDrill({ designer: d.nome, type: 'atrasos' })}
             />
           ))}
         </div>
@@ -293,7 +295,7 @@ export function Design() {
         onClose={() => setDrill(null)}
         title={
           drill
-            ? `${drill.type === 'feitas' ? 'Feitas' : 'Manutenções'} — ${drill.designer}`
+            ? `${drill.type === 'feitas' ? 'Feitas' : drill.type === 'atrasos' ? 'Atrasos' : 'Manutenções'} — ${drill.designer}`
             : ''
         }
         subtitle={drill ? `${drillEventos.length} evento(s)` : ''}
