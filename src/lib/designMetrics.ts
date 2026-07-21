@@ -3,7 +3,6 @@ import type { SalaryTier } from './types';
 import { countWorkingDays } from './holidays';
 import { primeiroDesignerAtivo, getDesignerInicio } from '../config';
 import { diasUteisAtestados, type Atestado } from './atestados';
-import type { DesignAtraso } from '../hooks/useDesignAtrasos';
 
 // A métrica de ATRASO só vale a partir de 01/07/2026 (Dia D de julho). Demandas
 // e atrasos anteriores a essa data não entram no cálculo de atraso%.
@@ -61,7 +60,7 @@ export interface DesignerMetrics {
   pctManutencao: number; // (manutencoesUnicas / feitasUnicas) * 100
   // === ATRASO (métrica pontuada principal a partir de jul/2026) ===
   atrasoPct: number;               // (atrasadasNoPeriodo / feitasNoAtraso) * 100
-  atrasadasNoPeriodo: number;      // demandas do designer que atrasaram (board Atrasos), jul/2026+
+  atrasadasNoPeriodo: number;      // demandas do designer com Status da tarefa = Atrasado, jul/2026+
   feitasNoAtraso: number;          // demandas feitas únicas do designer, jul/2026+ (denominador do atraso)
   tierAtraso: SalaryTier;          // 0 / 0.25 / 0.5 — baseado em atrasoPct
   // Métricas de bônus
@@ -287,25 +286,13 @@ function eventoData(e: DesignEvento): Date {
   return new Date(e.imported_at);
 }
 
-/** Chave única de um atraso (uma demanda atrasada conta 1 vez, mesmo se o board
- *  tiver linhas repetidas): monday_item_id > nome normalizado. */
-function atrasoKey(a: DesignAtraso): string {
-  if (a.monday_item_id) return `m:${a.monday_item_id}`;
-  const n = (a.nome || '').trim().toLowerCase();
-  return n ? `n:${n}` : `i:${a.monday_item_id ?? Math.random()}`;
-}
-
-/** Data de um atraso: log_criacao (quando entrou no board de Atrasos) >
- *  cronograma_fim > cronograma_inicio. null se nada parseável. */
-function atrasoData(a: DesignAtraso): Date | null {
-  const parsed = parseLogCriacaoDate(a.log_criacao);
-  if (parsed) return parsed;
-  for (const c of [a.cronograma_fim, a.cronograma_inicio]) {
-    if (!c) continue;
-    const d = new Date(c);
-    if (!isNaN(d.getTime())) return d;
-  }
-  return null;
+/** True se o "Status da tarefa" da demanda indica ATRASO. Cobre "Atrasado" e
+ *  "Atraso crítico" (ambos começam com "atras" após normalizar). Vale pras 3
+ *  origens: 🎨 Design e criação (feito), Manutenção e Manutenção (Cliente). */
+export function isStatusTarefaAtrasado(status: string | null | undefined): boolean {
+  if (!status) return false;
+  const n = status.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  return n.startsWith('atras');
 }
 
 export function filterEventosByDate(
@@ -414,8 +401,7 @@ export function computeDesignMetrics(
   eventos: DesignEvento[],
   range?: DateRange,
   holidaySet: Set<string> = new Set(),
-  atestados: Atestado[] = [],
-  atrasos: DesignAtraso[] = []
+  atestados: Atestado[] = []
 ): DesignSummary {
   // Período de análise = exatamente o range selecionado (inclui o dia em curso).
   // Antes o "Dia D" (ciclo dia-12) descontava o dia atual do "demandas/dia"; com
@@ -434,28 +420,14 @@ export function computeDesignMetrics(
   // Resolve as datas reais do período (pode ter sido inferido dos eventos)
   const { start: rangeStart, end: rangeEnd } = resolveRangeBounds(effRange, filtered);
 
-  // === ATRASOS (board "⌚ Atrasos do Design") ===
+  // === ATRASO (via coluna "Status da tarefa" = Atrasado) ===
   // Janela do atraso: o período selecionado, mas nunca antes de 01/07/2026 (a
   // métrica começa no Dia D de julho). atrasoInicio = max(rangeStart, jul/2026).
+  // O numerador do atraso agora vem da PRÓPRIA tabela design_demandas: qualquer
+  // demanda (feito / manutenção / manutenção cliente) com Status da tarefa =
+  // "Atrasado" (ou "Atraso crítico") — não usa mais o board "⌚ Atrasos".
   const atrasoInicio = rangeStart.getTime() > ATRASO_INICIO.getTime() ? rangeStart : ATRASO_INICIO;
   const atrasoInicioMs = atrasoInicio.getTime();
-  const atrasoFimMs = rangeEnd.getTime();
-  // Atrasos dentro da janela, agrupados pelo PRIMEIRO designer ativo (mesma
-  // regra dos eventos — combos "Felipe, Lais" vão pro Felipe).
-  const atrasosByDesigner = new Map<string, DesignAtraso[]>();
-  const atrasosNoPeriodo: DesignAtraso[] = [];
-  for (const a of atrasos) {
-    const d = atrasoData(a);
-    if (!d) continue;
-    const t = d.getTime();
-    if (t < atrasoInicioMs || t > atrasoFimMs) continue;
-    atrasosNoPeriodo.push(a);
-    const label = primeiroDesignerAtivo(a.designer);
-    if (!label) continue;
-    const arr = atrasosByDesigner.get(label) ?? [];
-    arr.push(a);
-    atrasosByDesigner.set(label, arr);
-  }
 
   // Agrupa por designer — só os ATIVOS aparecem como cards.
   // Eventos com designer mesclado (ex: "Felipe Moraes, Jean Carlos Tigre")
@@ -520,26 +492,23 @@ export function computeDesignMetrics(
     const tMan = feitos.length > 0 ? tierForPctManutencao(pct) : 0;
 
     // === ATRASO (métrica pontuada principal, jul/2026+) ===
-    // Denominador = demandas feitas ÚNICAS do designer a partir de 01/07/2026.
-    // Numerador = demandas que atrasaram (board de Atrasos) no mesmo recorte.
-    // Uma demanda que atrasou E foi feita conta 1 no numerador e 1 no denominador.
+    // Denominador = demandas FEITAS únicas do designer a partir de 01/07/2026.
+    // Numerador = demandas ÚNICAS (feito / manutenção / manutenção cliente) cujo
+    // "Status da tarefa" está Atrasado no mesmo recorte. Uma demanda que atrasou
+    // E foi feita conta 1 no numerador e 1 no denominador.
     // Piso do designer: se ele entrou no meio (getDesignerInicio), num E denom
-    // começam na entrada — o denominador já vem de `evs` (filtrado por inicio);
-    // o numerador aplica o mesmo piso aqui.
+    // começam na entrada — `evs` já vem filtrado por inicio; reforçamos jul/2026.
     const atrasoFloorMs = inicio ? Math.max(atrasoInicioMs, inicio.getTime()) : atrasoInicioMs;
     const feitosAtraso = feitos.filter((e) => eventoData(e).getTime() >= atrasoFloorMs);
     const feitasNoAtraso = new Set(feitosAtraso.map(uniqueDemandaKey)).size;
-    const atrasadasNoPeriodo = new Set(
-      (atrasosByDesigner.get(nome) ?? [])
-        .filter((a) => {
-          const d = atrasoData(a);
-          return d != null && d.getTime() >= atrasoFloorMs;
-        })
-        .map(atrasoKey)
-    ).size;
-    // Clamp em 100%: numerador (board de Atrasos) e denominador (board de Feitas)
-    // vêm de boards diferentes (IDs distintos), então em raras divergências de
-    // borda a razão poderia passar de 100% — travamos pra não exibir >100%.
+    const atrasadasKeys = new Set<string>();
+    for (const e of evs) {
+      if (eventoData(e).getTime() < atrasoFloorMs) continue;
+      if (isStatusTarefaAtrasado(e.status_tarefa)) atrasadasKeys.add(uniqueDemandaKey(e));
+    }
+    const atrasadasNoPeriodo = atrasadasKeys.size;
+    // Clamp em 100% por segurança (o numerador soma manutenção atrasada, que não
+    // está no denominador de feitas — em cenários raros poderia passar de 100%).
     const atrasoPct = feitasNoAtraso > 0
       ? Math.min(100, (atrasadasNoPeriodo / feitasNoAtraso) * 100)
       : 0;
@@ -598,10 +567,16 @@ export function computeDesignMetrics(
   const pctGeral = allFeitos.length > 0 ? (allManutsContam.length / allFeitos.length) * 100 : 0;
 
   // === ATRASO GERAL (time inteiro, jul/2026+) ===
+  // Numerador = demandas únicas (qualquer grupo) com Status da tarefa = Atrasado.
   const feitasAtrasoGeral = new Set(
     allFeitos.filter((e) => eventoData(e).getTime() >= atrasoInicioMs).map(uniqueDemandaKey)
   ).size;
-  const atrasadasGeral = new Set(atrasosNoPeriodo.map(atrasoKey)).size;
+  const atrasadasGeralKeys = new Set<string>();
+  for (const e of filtered) {
+    if (eventoData(e).getTime() < atrasoInicioMs) continue;
+    if (isStatusTarefaAtrasado(e.status_tarefa)) atrasadasGeralKeys.add(uniqueDemandaKey(e));
+  }
+  const atrasadasGeral = atrasadasGeralKeys.size;
   const pctAtrasoGeral = feitasAtrasoGeral > 0
     ? Math.min(100, (atrasadasGeral / feitasAtrasoGeral) * 100)
     : 0;

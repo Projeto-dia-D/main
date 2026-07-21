@@ -7,7 +7,6 @@ import { useGoogleAdsSpend } from '../../hooks/useGoogleAdsSpend';
 import { useMetaLinks } from '../../hooks/useMetaLinks';
 import { useDoutorLinks } from '../../hooks/useDoutorLinks';
 import { useDesignEventos } from '../../hooks/useDesignEventos';
-import { useDesignAtrasos } from '../../hooks/useDesignAtrasos';
 import { useAtestados } from '../../hooks/useAtestados';
 import { useHolidays } from '../../hooks/useHolidays';
 import { useInstanceMap } from '../../hooks/useInstanceMap';
@@ -70,7 +69,6 @@ export function Apresentacao() {
   const { links, byAccount: linksByAccount, byClient: linksByClient } = useMetaLinks();
   const { byClient: doutorLinksByClient } = useDoutorLinks();
   const { eventos: designEventos, lastUpdate: designLastUpdate } = useDesignEventos();
-  const { atrasos: designAtrasos } = useDesignAtrasos();
   const { atestados } = useAtestados();
   const { holidays } = useHolidays();
   const instanceMap = useInstanceMap();
@@ -122,8 +120,8 @@ export function Apresentacao() {
   );
 
   const designSummary = useMemo(
-    () => computeDesignMetrics(designEventos, range, holidaySet, atestados, designAtrasos),
-    [designEventos, range, holidaySet, atestados, designAtrasos],
+    () => computeDesignMetrics(designEventos, range, holidaySet, atestados),
+    [designEventos, range, holidaySet, atestados],
   );
 
   // Doutores destaque por programador: top 2 doutores com MELHOR TAXA entre

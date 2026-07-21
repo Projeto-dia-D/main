@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Palette, AlertTriangle, Database } from 'lucide-react';
 import { useDesignEventos } from '../../hooks/useDesignEventos';
-import { useDesignAtrasos } from '../../hooks/useDesignAtrasos';
 import { useHolidays } from '../../hooks/useHolidays';
 import { useAtestados } from '../../hooks/useAtestados';
 import { useMondayClients } from '../../hooks/useMondayClients';
@@ -32,7 +31,6 @@ export function Design() {
   const [subAba, setSubAba] = useState<'metricas' | 'atribuir'>('metricas');
 
   const { eventos: eventosRaw, loading, error, missingTable, lastUpdate } = useDesignEventos();
-  const { atrasos } = useDesignAtrasos();
   const { dateSet: holidaySet } = useHolidays();
   const { atestados } = useAtestados();
   const { clientsAll, nameByClientId } = useMondayClients();
@@ -78,8 +76,8 @@ export function Design() {
   }, [eventos, user]);
 
   const summary = useMemo(
-    () => computeDesignMetrics(eventosVisiveis, range, holidaySet, atestados, atrasos),
-    [eventosVisiveis, range, holidaySet, atestados, atrasos]
+    () => computeDesignMetrics(eventosVisiveis, range, holidaySet, atestados),
+    [eventosVisiveis, range, holidaySet, atestados]
   );
 
   // === SUMMARY GERAL (sem scope filter) — pra ranking comparativo do time ===
@@ -87,8 +85,8 @@ export function Design() {
   // precisa mostrar TODOS os designers (pra ele saber onde se encaixa em
   // produtividade/qualidade no time).
   const summaryGeral = useMemo(
-    () => computeDesignMetrics(eventos, range, holidaySet, atestados, atrasos),
-    [eventos, range, holidaySet, atestados, atrasos]
+    () => computeDesignMetrics(eventos, range, holidaySet, atestados),
+    [eventos, range, holidaySet, atestados]
   );
 
   // === GUARD ===
