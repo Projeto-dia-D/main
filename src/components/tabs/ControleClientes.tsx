@@ -2,7 +2,12 @@ import { useMemo, useState } from 'react';
 import { SlidersHorizontal, Search, X, Check, Ban, Database, AlertTriangle, Filter } from 'lucide-react';
 import { useMondayClients } from '../../hooks/useMondayClients';
 import { useClientMetricControls } from '../../hooks/useClientMetricControls';
-import { type ClientMetricControl } from '../../lib/clientMetricControl';
+import {
+  METRIC_SECTORS,
+  defaultControl,
+  type ClientMetricControl,
+  type MetricSector,
+} from '../../lib/clientMetricControl';
 import { useUser, hasFullAccess } from '../../lib/userContext';
 
 export function ControleClientes() {
