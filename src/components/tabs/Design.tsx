@@ -5,8 +5,13 @@ import { useHolidays } from '../../hooks/useHolidays';
 import { useAtestados } from '../../hooks/useAtestados';
 import { useMondayClients } from '../../hooks/useMondayClients';
 import { useClientMetricControls } from '../../hooks/useClientMetricControls';
-import { nomesExcluidosNoSetor, nomeCasaExcluido } from '../../lib/clientMetricControl';
-import { computeDesignMetrics, isStatusTarefaAtrasado, type DesignerMetrics } from '../../lib/designMetrics';
+import { exclusoesPorNomeNoSetor, nomeCasaExcluidoEm, localISODate } from '../../lib/clientMetricControl';
+import {
+  computeDesignMetrics,
+  isStatusTarefaAtrasado,
+  parseLogCriacaoDate,
+  type DesignerMetrics,
+} from '../../lib/designMetrics';
 import type { DateRange } from '../../lib/metrics';
 import { DateRangeFilter, diaDRange } from '../programacao/DateRangeFilter';
 import { Modal } from '../Modal';
@@ -38,19 +43,28 @@ export function Design() {
 
   // Controle de Clientes: remove eventos cujos clientes estão TODOS desligados
   // no setor "design". Evento sem cliente identificado é mantido.
-  const designExcluidosNomes = useMemo(() => {
+  const designExclusoes = useMemo(() => {
     const mainNameById = new Map(clientsAll.map((c) => [c.id, c.name]));
-    return nomesExcluidosNoSetor(metricControls, 'design', [mainNameById, nameByClientId]);
+    return exclusoesPorNomeNoSetor(metricControls, 'design', [mainNameById, nameByClientId]);
   }, [metricControls, clientsAll, nameByClientId]);
 
   const eventos = useMemo(() => {
-    if (designExcluidosNomes.size === 0) return eventosRaw;
+    if (designExclusoes.length === 0) return eventosRaw;
+    // Data do evento em ISO — `log_criacao` é texto do Monday ("Fulano Jun 12,
+    // 2024 4:48 PM"), então precisa parsear antes de comparar com a data-corte.
+    const dataEventoISO = (e: (typeof eventosRaw)[number]): string | null => {
+      const p = parseLogCriacaoDate(e.log_criacao);
+      if (p) return localISODate(p);
+      if (e.data_feito) return e.data_feito.slice(0, 10);
+      return e.imported_at ? e.imported_at.slice(0, 10) : null;
+    };
     return eventosRaw.filter((e) => {
       const partes = (e.clientes || '').split(/\s*,\s*/).map((s) => s.trim()).filter(Boolean);
       if (partes.length === 0) return true; // sem cliente identificado → mantém
-      return !partes.every((p) => nomeCasaExcluido(p, designExcluidosNomes));
+      const d = dataEventoISO(e);
+      return !partes.every((p) => nomeCasaExcluidoEm(p, d, designExclusoes));
     });
-  }, [eventosRaw, designExcluidosNomes]);
+  }, [eventosRaw, designExclusoes]);
 
   // === SCOPE FILTER ===
   // Designer não-admin: ve so seus proprios eventos.

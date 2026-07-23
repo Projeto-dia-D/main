@@ -5,7 +5,7 @@ import { useMetaSpend } from '../../hooks/useMetaSpend';
 import { useGoogleAdsSpend } from '../../hooks/useGoogleAdsSpend';
 import { useMondayClients } from '../../hooks/useMondayClients';
 import { useClientMetricControls } from '../../hooks/useClientMetricControls';
-import { idsExcluidosNoSetor } from '../../lib/clientMetricControl';
+import { idsExcluidosNoSetorEm } from '../../lib/clientMetricControl';
 import { useMetaLinks } from '../../hooks/useMetaLinks';
 import { useDoutorLinks } from '../../hooks/useDoutorLinks';
 import { useAdAccountsForGestor } from '../../hooks/useAdAccountsForGestor';
@@ -95,9 +95,11 @@ export function GestorTrafego() {
   } = useMondayClients();
   // Controle de Clientes: clientes desligados do setor "gestor" saem das métricas.
   const { controlsList: metricControls } = useClientMetricControls();
+  // Considera o PERÍODO: Dia D fechado (que começa antes da data de corte)
+  // continua contando o cliente — só some de períodos a partir do corte.
   const gestorExcluidos = useMemo(
-    () => idsExcluidosNoSetor(metricControls, 'gestor'),
-    [metricControls]
+    () => idsExcluidosNoSetorEm(metricControls, 'gestor', range.start),
+    [metricControls, range]
   );
   const {
     links,

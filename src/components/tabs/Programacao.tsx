@@ -4,9 +4,9 @@ import { useInstanceMap } from '../../hooks/useInstanceMap';
 import { useMondayClients } from '../../hooks/useMondayClients';
 import { useClientMetricControls } from '../../hooks/useClientMetricControls';
 import {
-  idsExcluidosNoSetor,
-  nomesExcluidosNoSetor,
-  nomeCasaExcluido,
+  idsExcluidosNoSetorEm,
+  exclusoesPorNomeNoSetor,
+  nomeCasaExcluidoEm,
 } from '../../lib/clientMetricControl';
 import {
   computeMetrics,
@@ -20,6 +20,7 @@ import { PainelGeral } from '../programacao/PainelGeral';
 import { ChurnCard } from '../ChurnCard';
 import { RankingDoutores } from '../programacao/RankingDoutores';
 import { Alertas } from '../programacao/Alertas';
+import { AlertaNomeDivergente } from '../programacao/AlertaNomeDivergente';
 import { ChatsInterrompidos } from '../programacao/ChatsInterrompidos';
 import { ChatsIncompletos } from '../programacao/ChatsIncompletos';
 import { TierImage } from '../programacao/TierImage';
@@ -59,19 +60,21 @@ export function Programacao() {
   } = useMondayClients();
   // Controle de Clientes: clientes desligados do setor "programacao".
   const { controlsList: metricControls } = useClientMetricControls();
-  const programacaoExcluidosIds = useMemo(
-    () => idsExcluidosNoSetor(metricControls, 'programacao'),
-    [metricControls]
-  );
-  const programacaoExcluidosNomes = useMemo(() => {
+  const programacaoExclusoes = useMemo(() => {
     const mainNameById = new Map(mondayClientsAll.map((c) => [c.id, c.name]));
-    return nomesExcluidosNoSetor(metricControls, 'programacao', [mainNameById, nameByClientId]);
+    return exclusoesPorNomeNoSetor(metricControls, 'programacao', [mainNameById, nameByClientId]);
   }, [metricControls, mondayClientsAll, nameByClientId]);
 
   // Default: range "Dia D" (dia 12 do mes atual ate hoje) — igual ao das
   // outras abas (Apresentacao, Gestor, CS) pra os numeros baterem ao abrir.
   // User pode trocar pra "Tudo" ou outro range no DateRangeFilter.
   const [range, setRange] = useState<DateRange>(() => diaDRange());
+  // IDs desligados na Programação considerando o PERÍODO analisado: um Dia D já
+  // fechado (que começa ANTES da data de corte) continua contando o cliente.
+  const programacaoExcluidosIds = useMemo(
+    () => idsExcluidosNoSetorEm(metricControls, 'programacao', range.start),
+    [metricControls, range]
+  );
   const [openModal, setOpenModal] = useState<ModalKind>(null);
   const [subAba, setSubAba] = useState<SubAba>('metricas');
   // null = mostra todos; senão filtra leads por responsável (Gabriel/Eduardo)
@@ -104,15 +107,17 @@ export function Programacao() {
   const filteredLeads = useMemo(() => {
     let byRange = filterByDateRange(leads, range);
     // Controle de Clientes: tira leads de clientes desligados na Programação.
-    if (programacaoExcluidosNomes.size > 0) {
-      byRange = byRange.filter((l) => !nomeCasaExcluido(l.nomeDoutor, programacaoExcluidosNomes));
+    if (programacaoExclusoes.length > 0) {
+      byRange = byRange.filter(
+        (l) => !nomeCasaExcluidoEm(l.nomeDoutor, l.dataCadastro, programacaoExclusoes)
+      );
     }
     if (!effectiveResponsavel) return byRange;
     return byRange.filter((l) => {
       const r = getResponsavelForDoutor(l.nomeDoutor, responsavelByClient);
       return r === effectiveResponsavel;
     });
-  }, [leads, range, effectiveResponsavel, responsavelByClient, programacaoExcluidosNomes]);
+  }, [leads, range, effectiveResponsavel, responsavelByClient, programacaoExclusoes]);
 
   const summary = useMemo(
     () => computeMetrics(filteredLeads, range, instanceMap, mondayClients, biaTimelineByClientId, biaFaseByClientId),
@@ -144,11 +149,13 @@ export function Programacao() {
   // visão pessoal pra calcular comparação vs média geral da agência.
   const fullSummary = useMemo(() => {
     let all = filterByDateRange(leads, range);
-    if (programacaoExcluidosNomes.size > 0) {
-      all = all.filter((l) => !nomeCasaExcluido(l.nomeDoutor, programacaoExcluidosNomes));
+    if (programacaoExclusoes.length > 0) {
+      all = all.filter(
+        (l) => !nomeCasaExcluidoEm(l.nomeDoutor, l.dataCadastro, programacaoExclusoes)
+      );
     }
     return computeMetrics(all, range, instanceMap, mondayClients, biaTimelineByClientId, biaFaseByClientId);
-  }, [leads, range, instanceMap, mondayClients, biaTimelineByClientId, biaFaseByClientId, programacaoExcluidosNomes]);
+  }, [leads, range, instanceMap, mondayClients, biaTimelineByClientId, biaFaseByClientId, programacaoExclusoes]);
   // ATENÇÃO: os modais e listas devem usar `summary.activeLeads`, nunca
   // `filteredLeads`. activeLeads já tirou chats interrompidos e incompletos.
   const transferidos = useMemo(
@@ -259,6 +266,12 @@ export function Programacao() {
       {subAba === 'revisao' && <RevisaoMotivos />}
       {subAba === 'metricas' && (
       <>
+      {/* AVISO — SÓ PROGRAMADOR: leads gravados com nome de doutor diferente do
+          nome da instância na uazapi (fonte da verdade). Não renderiza nada
+          quando está tudo certo. Pega o problema antes de sujar as métricas. */}
+      {user.role === 'programador' && (
+        <AlertaNomeDivergente leads={leads} instanceMap={instanceMap} />
+      )}
       {/* Tabs de responsável: só admin pode trocar. Programador vê os
           próprios dados fixados (sem opção de troca). */}
       {hasFullAccess(user) && responsaveis.length > 0 && (

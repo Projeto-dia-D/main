@@ -23,6 +23,12 @@ import {
   computeDesignMetrics, formatBonusTotal,
 } from '../../lib/designMetrics';
 import { computeMetrics, filterByDateRange, type DateRange } from '../../lib/metrics';
+import {
+  exclusoesPorNomeNoSetor,
+  nomeCasaExcluidoEm,
+  idsExcluidosNoSetorEm,
+} from '../../lib/clientMetricControl';
+import { useClientMetricControls } from '../../hooks/useClientMetricControls';
 import { diaDRange, DateRangeFilter } from '../programacao/DateRangeFilter';
 import { isClientChurned } from '../../lib/monday';
 import { PainelGeral } from '../programacao/PainelGeral';
@@ -64,8 +70,9 @@ export function Apresentacao() {
     clients: mondayClients,
     allClients: mondayAllClients,
     biaActiveIds, biaTimelineByClientId, biaFaseByClientId,
-    responsavelByName,
+    responsavelByName, nameByClientId,
   } = useMondayClients();
+  const { controlsList: metricControls } = useClientMetricControls();
   const { links, byAccount: linksByAccount, byClient: linksByClient } = useMetaLinks();
   const { byClient: doutorLinksByClient } = useDoutorLinks();
   const { eventos: designEventos, lastUpdate: designLastUpdate } = useDesignEventos();
@@ -86,6 +93,36 @@ export function Apresentacao() {
   const { googleSpend } = useGoogleAdsSpend(range);
   const filteredLeads = useMemo(() => filterByDateRange(leads, range), [leads, range]);
 
+  // === Controle de Clientes — MESMAS exclusões das abas individuais, pra o
+  //     telão bater com a Programação/Gestor/CS. Design NÃO exclui ninguém. ===
+  const mainNameById = useMemo(
+    () => new Map(mondayAllClients.map((c) => [c.id, c.name] as const)),
+    [mondayAllClients],
+  );
+  // Programação: filtra por NOME do doutor no lead (respeita "vale a partir de").
+  const programacaoExclusoes = useMemo(
+    () => exclusoesPorNomeNoSetor(metricControls, 'programacao', [mainNameById, nameByClientId]),
+    [metricControls, mainNameById, nameByClientId],
+  );
+  const leadsProgramacao = useMemo(
+    () =>
+      programacaoExclusoes.length === 0
+        ? filteredLeads
+        : filteredLeads.filter(
+            (l) => !nomeCasaExcluidoEm(l.nomeDoutor, l.dataCadastro, programacaoExclusoes),
+          ),
+    [filteredLeads, programacaoExclusoes],
+  );
+  // Gestor/CS: excluem por ID (herdam sempre o desligamento da Programação).
+  const gestorExcluidos = useMemo(
+    () => idsExcluidosNoSetorEm(metricControls, 'gestor', range.start),
+    [metricControls, range],
+  );
+  const csExcluidos = useMemo(
+    () => idsExcluidosNoSetorEm(metricControls, 'cs', range.start),
+    [metricControls, range],
+  );
+
   const clientesParaMetricas = useMemo(() => {
     if (mondayAllClients.length === 0) return mondayClients;
     const idsAtivos = new Set(mondayClients.map((c) => c.id));
@@ -94,29 +131,44 @@ export function Apresentacao() {
     return extras.length === 0 ? mondayClients : [...mondayClients, ...extras];
   }, [mondayClients, mondayAllClients, links]);
 
+  const clientesGestor = useMemo(
+    () =>
+      gestorExcluidos.size === 0
+        ? clientesParaMetricas
+        : clientesParaMetricas.filter((c) => !gestorExcluidos.has(c.id)),
+    [clientesParaMetricas, gestorExcluidos],
+  );
+  const clientesCs = useMemo(
+    () =>
+      csExcluidos.size === 0
+        ? clientesParaMetricas
+        : clientesParaMetricas.filter((c) => !csExcluidos.has(c.id)),
+    [clientesParaMetricas, csExcluidos],
+  );
+
   const programacaoSummary = useMemo(
-    () => computeMetrics(filteredLeads, range, instanceMap, mondayAllClients, biaTimelineByClientId, biaFaseByClientId),
-    [filteredLeads, range, instanceMap, mondayAllClients, biaTimelineByClientId, biaFaseByClientId],
+    () => computeMetrics(leadsProgramacao, range, instanceMap, mondayAllClients, biaTimelineByClientId, biaFaseByClientId),
+    [leadsProgramacao, range, instanceMap, mondayAllClients, biaTimelineByClientId, biaFaseByClientId],
   );
 
   const gestorSummary = useMemo(
     () => computeGestorMetrics({
-      clients: clientesParaMetricas, insights, leads: filteredLeads,
+      clients: clientesGestor, insights, leads: filteredLeads,
       metaLinks: linksByAccount, doutorLinks: doutorLinksByClient,
       biaActiveIds, biaTimelineByClientId, biaFaseByClientId, dateRange: range,
       googleSpend,
     }),
-    [clientesParaMetricas, insights, filteredLeads, linksByAccount, doutorLinksByClient, biaActiveIds, biaTimelineByClientId, biaFaseByClientId, range, googleSpend],
+    [clientesGestor, insights, filteredLeads, linksByAccount, doutorLinksByClient, biaActiveIds, biaTimelineByClientId, biaFaseByClientId, range, googleSpend],
   );
 
   const csSummary = useMemo(
     () => computeCsMetrics({
-      ...gestorSummary, clients: clientesParaMetricas, insights, leads: filteredLeads,
+      ...gestorSummary, clients: clientesCs, insights, leads: filteredLeads,
       metaLinks: linksByAccount, doutorLinks: doutorLinksByClient,
       biaActiveIds, biaTimelineByClientId, biaFaseByClientId, dateRange: range,
       googleSpend,
     } as Parameters<typeof computeCsMetrics>[0]),
-    [gestorSummary, clientesParaMetricas, insights, filteredLeads, linksByAccount, doutorLinksByClient, biaActiveIds, biaTimelineByClientId, biaFaseByClientId, range, googleSpend],
+    [gestorSummary, clientesCs, insights, filteredLeads, linksByAccount, doutorLinksByClient, biaActiveIds, biaTimelineByClientId, biaFaseByClientId, range, googleSpend],
   );
 
   const designSummary = useMemo(
