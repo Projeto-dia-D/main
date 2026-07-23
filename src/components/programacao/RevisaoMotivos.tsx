@@ -1,9 +1,14 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Check, EyeOff, RotateCcw, Ban, HelpCircle } from 'lucide-react';
 import { supabase, TABLE_NAME } from '../../lib/supabase';
-import { isTransferido, isInterrompido } from '../../lib/metrics';
+import { isTransferido, isInterrompido, getResponsavelForDoutor } from '../../lib/metrics';
 import type { RelatorioBias } from '../../lib/types';
-import { useUser } from '../../lib/userContext';
+import { useUser, hasFullAccess } from '../../lib/userContext';
+import { useMondayClients } from '../../hooks/useMondayClients';
+import { nameMatchesScope } from '../../lib/monday';
+
+/** Valor especial do filtro de responsável pra "doutores sem responsável". */
+const SEM_RESP = '__sem__';
 
 /** Tabela Supabase que persiste o "Manter como está". Inclui realtime — todos
  *  os admins veem o mesmo estado e sincronizam quando alguém oculta um lead. */
@@ -27,6 +32,24 @@ export function RevisaoMotivos() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filtro, setFiltro] = useState<string>('todos');
+  // Filtro por DEV responsável pelo doutor ('todos' | SEM_RESP | nome do resp)
+  const [filtroResp, setFiltroResp] = useState<string>('todos');
+  const { responsavelByName, responsaveis } = useMondayClients();
+
+  // Programador não-admin: fica FIXO no próprio scope (não escolhe outro dev),
+  // mesma regra da aba de métricas. Admin escolhe pelos chips.
+  const enforcedResp = useMemo<string | null>(() => {
+    if (hasFullAccess(user)) return null;
+    if (user.role === 'programador' && user.scope) {
+      for (const r of responsaveis) {
+        if (nameMatchesScope(user.scope, r)) return r;
+      }
+      return user.scope;
+    }
+    return null;
+  }, [user, responsaveis]);
+  const respAtivo = enforcedResp ?? filtroResp;
+
   // Ações ainda em andamento (otimistic UI)
   const [emAcao, setEmAcao] = useState<Map<string, 'mudar' | 'desclassificar' | null>>(new Map());
   // IDs ocultos via "Manter como está" — persiste em Supabase (tabela
@@ -112,18 +135,54 @@ export function RevisaoMotivos() {
     });
   }, [leads]);
 
-  // Agrupa por motivo VISÍVEL (limpo): conta apenas leads que ainda não
-  // foram ocultados pelo botão "Manter como está". Motivos zerados (todos
-  // ocultos) somem dos chips — sem ruído visual.
+  // DEV responsável de cada lead, resolvido pelo nome do doutor (mesma regra
+  // da aba de métricas: nomeDoutor × cliente do board Bia Soft).
+  const respDoLead = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const l of naoTransferencia) {
+      m.set(l.id, getResponsavelForDoutor(l.nomeDoutor, responsavelByName));
+    }
+    return m;
+  }, [naoTransferencia, responsavelByName]);
+
+  // Base visível: não-transferência e não ocultos ("Manter como está").
+  const visiveis = useMemo(
+    () => naoTransferencia.filter((l) => !ocultos.has(l.id)),
+    [naoTransferencia, ocultos]
+  );
+
+  const matchResp = (id: string): boolean => {
+    if (respAtivo === 'todos') return true;
+    const r = respDoLead.get(id) ?? null;
+    if (respAtivo === SEM_RESP) return r === null;
+    return r === respAtivo;
+  };
+
+  // Chips de MOTIVO: contam dentro do responsável selecionado. Motivos zerados
+  // somem dos chips — sem ruído visual.
   const motivosUnicos = useMemo(() => {
     const map = new Map<string, number>();
-    for (const l of naoTransferencia) {
-      if (ocultos.has(l.id)) continue;
+    for (const l of visiveis) {
+      if (!matchResp(l.id)) continue;
       const m = l.motivoTransferencia.trim();
       map.set(m, (map.get(m) ?? 0) + 1);
     }
     return [...map.entries()].sort((a, b) => b[1] - a[1]); // mais frequente primeiro
-  }, [naoTransferencia, ocultos]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visiveis, respAtivo, respDoLead]);
+
+  // Chips de RESPONSÁVEL: contam dentro do motivo selecionado.
+  const respUnicos = useMemo(() => {
+    const map = new Map<string, number>();
+    let sem = 0;
+    for (const l of visiveis) {
+      if (filtro !== 'todos' && l.motivoTransferencia !== filtro) continue;
+      const r = respDoLead.get(l.id) ?? null;
+      if (r) map.set(r, (map.get(r) ?? 0) + 1);
+      else sem++;
+    }
+    return { lista: [...map.entries()].sort((a, b) => b[1] - a[1]), sem };
+  }, [visiveis, filtro, respDoLead]);
 
   // Se o filtro selecionado desapareceu (zerou após ocultar), volta pra "todos"
   // automaticamente — evita a tela "Nada pra revisar" com outros chips visíveis.
@@ -134,12 +193,19 @@ export function RevisaoMotivos() {
   }, [motivosUnicos, filtro]);
 
   const filtrados = useMemo(() => {
-    let base = naoTransferencia.filter((l) => !ocultos.has(l.id));
-    if (filtro !== 'todos') base = base.filter((l) => l.motivoTransferencia === filtro);
-    return base;
-  }, [naoTransferencia, filtro, ocultos]);
+    return visiveis.filter((l) => {
+      if (filtro !== 'todos' && l.motivoTransferencia !== filtro) return false;
+      return matchResp(l.id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visiveis, filtro, respAtivo, respDoLead]);
 
-  const totalVisivel = naoTransferencia.filter((l) => !ocultos.has(l.id)).length;
+  // Total do chip "Todos" (motivos) — já dentro do responsável selecionado.
+  const totalVisivel = useMemo(
+    () => visiveis.filter((l) => matchResp(l.id)).length,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [visiveis, respAtivo, respDoLead]
+  );
 
   async function mudarParaAgendar(lead: LeadRevisao) {
     setEmAcao((m) => new Map(m).set(lead.id, 'mudar'));
@@ -216,6 +282,67 @@ export function RevisaoMotivos() {
           </button>
         </div>
 
+        {/* === SEPARAÇÃO POR DEV RESPONSÁVEL PELO DOUTOR === */}
+        {enforcedResp ? (
+          <div className="text-[11px] text-burst-muted mb-3">
+            Mostrando só os doutores sob sua programação:{' '}
+            <span className="text-burst-orange-bright font-semibold">{nomeCurto(enforcedResp)}</span>
+          </div>
+        ) : (
+          <div className="mb-3">
+            <div className="text-[10px] uppercase tracking-widest text-burst-muted mb-1.5">
+              Dev responsável pelo doutor
+            </div>
+            <div className="flex items-center gap-1.5 bg-black/30 border border-burst-border rounded-lg p-1 flex-wrap">
+              <button
+                onClick={() => setFiltroResp('todos')}
+                className={[
+                  'flex items-center gap-1.5 px-3 py-1 rounded text-xs font-semibold transition-colors',
+                  filtroResp === 'todos'
+                    ? 'bg-burst-orange/20 text-burst-orange-bright'
+                    : 'text-burst-muted hover:bg-white/5 hover:text-white',
+                ].join(' ')}
+              >
+                <span>Todos</span>
+                <span className="text-[10px] text-burst-muted/80">
+                  {respUnicos.lista.reduce((s, [, n]) => s + n, 0) + respUnicos.sem}
+                </span>
+              </button>
+              {respUnicos.lista.map(([r, n]) => (
+                <button
+                  key={r}
+                  onClick={() => setFiltroResp(r)}
+                  title={r}
+                  className={[
+                    'flex items-center gap-1.5 px-3 py-1 rounded text-xs font-semibold transition-colors',
+                    filtroResp === r
+                      ? 'bg-burst-orange/20 text-burst-orange-bright'
+                      : 'text-burst-muted hover:bg-white/5 hover:text-white',
+                  ].join(' ')}
+                >
+                  <span className="truncate max-w-[200px]">{nomeCurto(r)}</span>
+                  <span className="text-[10px] text-burst-muted/80 shrink-0">{n}</span>
+                </button>
+              ))}
+              {respUnicos.sem > 0 && (
+                <button
+                  onClick={() => setFiltroResp(SEM_RESP)}
+                  title="Doutores sem responsável mapeado no board Bia Soft"
+                  className={[
+                    'flex items-center gap-1.5 px-3 py-1 rounded text-xs font-semibold transition-colors',
+                    filtroResp === SEM_RESP
+                      ? 'bg-burst-orange/20 text-burst-orange-bright'
+                      : 'text-burst-muted hover:bg-white/5 hover:text-white',
+                  ].join(' ')}
+                >
+                  <span>Sem responsável</span>
+                  <span className="text-[10px] text-burst-muted/80 shrink-0">{respUnicos.sem}</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Filtros dinâmicos por motivo */}
         <div className="flex items-center gap-1.5 bg-black/30 border border-burst-border rounded-lg p-1 mb-4 flex-wrap">
           <button
@@ -269,6 +396,7 @@ export function RevisaoMotivos() {
               <LeadCard
                 key={lead.id}
                 lead={lead}
+                responsavel={respDoLead.get(lead.id) ?? null}
                 emAcao={emAcao.get(lead.id) ?? null}
                 onMudar={() => mudarParaAgendar(lead)}
                 onManter={() => manter(lead)}
@@ -284,12 +412,14 @@ export function RevisaoMotivos() {
 
 function LeadCard({
   lead,
+  responsavel,
   emAcao,
   onMudar,
   onManter,
   onDesclassificar,
 }: {
   lead: LeadRevisao;
+  responsavel: string | null;
   emAcao: 'mudar' | 'desclassificar' | null;
   onMudar: () => void;
   onManter: () => void;
@@ -334,6 +464,18 @@ function LeadCard({
               title={lead.motivoTransferencia}
             >
               {labelMotivo(lead.motivoTransferencia)}
+            </span>
+            {/* DEV responsável pelo doutor */}
+            <span
+              className={[
+                'px-1.5 py-0.5 rounded text-[9px] uppercase tracking-widest font-bold border',
+                responsavel
+                  ? 'border-burst-border bg-black/40 text-white/70'
+                  : 'border-burst-warning/40 bg-burst-warning/10 text-burst-warning',
+              ].join(' ')}
+              title={responsavel ? `Dev responsável: ${responsavel}` : 'Doutor sem responsável mapeado no board Bia Soft'}
+            >
+              {responsavel ? nomeCurto(responsavel) : 'sem dev'}
             </span>
           </div>
           <div className="text-[11px] text-burst-muted mt-0.5">
@@ -398,6 +540,13 @@ function LeadCard({
       </div>
     </li>
   );
+}
+
+/** Encurta o nome do dev pra caber no chip/badge:
+ *  "Gabriel Velho dos Santos" → "Gabriel Velho". */
+function nomeCurto(s: string): string {
+  const parts = s.trim().split(/\s+/);
+  return parts.slice(0, 2).join(' ') || s;
 }
 
 /** Formata o motivo bruto pra label mais amigável: "duvida_tecnica" → "Dúvida técnica". */
